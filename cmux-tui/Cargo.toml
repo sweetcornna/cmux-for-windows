@@ -29,6 +29,7 @@ members = [
     "crates/cmux-tui-machine-agent-protocol",
     "crates/cmux-tui-machine-protocol",
     "crates/cmux-tui",
+    "crates/cmux-gui",
 ]
 default-members = [
     "bindings/rust",
