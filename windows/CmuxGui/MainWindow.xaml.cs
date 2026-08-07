@@ -131,7 +131,10 @@ public sealed partial class MainWindow : Window
         text.Children.Add(new TextBlock { Text = title });
         text.Children.Add(new TextBlock
         {
-            Text = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile),
+            // The session's actual directory, not a hardcoded guess.
+            Text = App.LaunchFolder is { Length: > 0 } folder
+                ? folder
+                : Environment.GetFolderPath(Environment.SpecialFolder.UserProfile),
             Style = Application.Current.Resources["CaptionTextBlockStyle"] as Style,
             Foreground = Application.Current.Resources["TextFillColorSecondaryBrush"] as Brush,
             TextTrimming = TextTrimming.CharacterEllipsis,

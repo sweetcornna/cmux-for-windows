@@ -1,1 +1,4 @@
 target/
+
+# Alternate cargo target dirs used for isolated test/verification builds.
+target-*/

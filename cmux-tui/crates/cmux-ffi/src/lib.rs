@@ -142,10 +142,44 @@ fn pack(color: Rgb) -> u32 {
 /// [`cmux_session_free`].
 #[unsafe(no_mangle)]
 pub extern "C" fn cmux_session_new(cols: u16, rows: u16) -> *mut CmuxSession {
+    session_new(cols, rows, None)
+}
+
+/// Create a session whose shell starts in `cwd`.
+///
+/// A separate entry point rather than a changed signature, so the existing one
+/// stays ABI-stable. An unreadable or non-existent directory falls back to the
+/// home directory instead of failing the launch, since the caller is usually
+/// Explorer handing over whatever folder was right-clicked.
+///
+/// # Safety
+/// `cwd` must point to `cwd_len` readable bytes of UTF-8, or be null.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn cmux_session_new_in(
+    cols: u16,
+    rows: u16,
+    cwd: *const u8,
+    cwd_len: usize,
+) -> *mut CmuxSession {
+    let directory = if cwd.is_null() || cwd_len == 0 {
+        None
+    } else {
+        let bytes = unsafe { std::slice::from_raw_parts(cwd, cwd_len) };
+        std::str::from_utf8(bytes)
+            .ok()
+            .map(str::trim)
+            .filter(|path| !path.is_empty() && std::path::Path::new(path).is_dir())
+            .map(str::to_owned)
+    };
+    session_new(cols, rows, directory)
+}
+
+fn session_new(cols: u16, rows: u16, cwd: Option<String>) -> *mut CmuxSession {
     let cols = cols.max(1);
     let rows = rows.max(1);
     let mux = Mux::new("cmux-gui", SurfaceOptions::default());
-    let cwd = cmux_tui_core::platform::home_dir().map(|p| p.to_string_lossy().into_owned());
+    let cwd = cwd
+        .or_else(|| cmux_tui_core::platform::home_dir().map(|p| p.to_string_lossy().into_owned()));
     let Ok(surface) = mux.new_tab(None, cwd, Some((cols, rows))) else {
         return std::ptr::null_mut();
     };
@@ -274,6 +308,41 @@ pub unsafe extern "C" fn cmux_session_apply_theme_text(
         ..DefaultColors::default()
     });
     0
+}
+
+/// Scroll the viewport by `delta_rows`, negative for older output.
+///
+/// Returns 0 on success. Scrolling is a view operation, so it does not disturb
+/// the PTY or what the shell believes the screen contains.
+///
+/// # Safety
+/// `session` must be a live session pointer.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn cmux_session_scroll(session: *mut CmuxSession, delta_rows: i32) -> i32 {
+    if session.is_null() {
+        return CMUX_ERR_NULL;
+    }
+    let session = unsafe { &mut *session };
+    match session.surface.view_scroll_delta(delta_rows as isize) {
+        Ok(_) => 0,
+        Err(_) => CMUX_ERR_ENGINE,
+    }
+}
+
+/// Jump the viewport back to the live bottom.
+///
+/// # Safety
+/// `session` must be a live session pointer.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn cmux_session_scroll_to_bottom(session: *mut CmuxSession) -> i32 {
+    if session.is_null() {
+        return CMUX_ERR_NULL;
+    }
+    let session = unsafe { &mut *session };
+    match session.surface.view_scroll_to_bottom() {
+        Ok(_) => 0,
+        Err(_) => CMUX_ERR_ENGINE,
+    }
 }
 
 /// Copy the current grid into `cells` and frame state into `frame`.

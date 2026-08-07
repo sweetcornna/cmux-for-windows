@@ -74,6 +74,15 @@ internal static partial class CmuxNative
     [LibraryImport(Library, EntryPoint = "cmux_session_new")]
     public static partial IntPtr SessionNew(ushort cols, ushort rows);
 
+    [LibraryImport(Library, EntryPoint = "cmux_session_new_in")]
+    public static partial IntPtr SessionNewIn(ushort cols, ushort rows, ReadOnlySpan<byte> cwd, nuint cwdLen);
+
+    [LibraryImport(Library, EntryPoint = "cmux_session_scroll")]
+    public static partial int SessionScroll(IntPtr session, int deltaRows);
+
+    [LibraryImport(Library, EntryPoint = "cmux_session_scroll_to_bottom")]
+    public static partial int SessionScrollToBottom(IntPtr session);
+
     [LibraryImport(Library, EntryPoint = "cmux_session_free")]
     public static partial void SessionFree(IntPtr session);
 

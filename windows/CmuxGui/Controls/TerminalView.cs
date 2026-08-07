@@ -99,8 +99,11 @@ public sealed partial class TerminalView : UserControl, IDisposable
         // A click has to move focus here or every keystroke goes to whatever
         // the shell focused first (the search box). CanvasControl can mark
         // pointer events handled, so handledEventsToo is required.
-        AddHandler(PointerPressedEvent,
-            new PointerEventHandler((_, _) => TakeFocus("pointer", FocusState.Pointer)), true);
+        AddHandler(PointerPressedEvent, new PointerEventHandler(OnPointerDown), true);
+        AddHandler(PointerMovedEvent, new PointerEventHandler(OnPointerMove), true);
+        AddHandler(PointerReleasedEvent, new PointerEventHandler(OnPointerUp), true);
+        AddHandler(PointerWheelChangedEvent, new PointerEventHandler(OnPointerWheel), true);
+        BuildContextMenu();
 
         Diag.Log("TerminalView ctor");
         Loaded += OnLoaded;
@@ -181,7 +184,16 @@ public sealed partial class TerminalView : UserControl, IDisposable
         {
             try
             {
-                _session = CmuxNative.SessionNew(cols, rows);
+                var folder = App.LaunchFolder;
+                if (string.IsNullOrWhiteSpace(folder))
+                {
+                    _session = CmuxNative.SessionNew(cols, rows);
+                }
+                else
+                {
+                    var cwd = Encoding.UTF8.GetBytes(folder);
+                    _session = CmuxNative.SessionNewIn(cols, rows, cwd, (nuint)cwd.Length);
+                }
                 Diag.Log($"SessionNew({cols},{rows}) -> {_session}");
                 _status = _session == IntPtr.Zero
                     ? "cmux_session_new returned null"
@@ -411,6 +423,22 @@ public sealed partial class TerminalView : UserControl, IDisposable
                         fg == CmuxNative.NoColor ? defaultFg : FromPacked(fg, defaultFg),
                         _format);
                 }
+            }
+        }
+
+        // Selection sits above the cells and below the cursor, tinted rather than
+        // opaque so the text under it stays readable.
+        if (SelectionRange() is { } sel)
+        {
+            var tint = Color.FromArgb(90, 0x0A, 0x84, 0xFF);
+            for (var row = sel.Start.Row; row <= sel.End.Row && row < _frame.Rows; row++)
+            {
+                var first = row == sel.Start.Row ? sel.Start.Col : 0;
+                var last = row == sel.End.Row ? sel.End.Col : _frame.Cols - 1;
+                ds.FillRectangle(
+                    new Rect(first * _cellWidth, row * _cellHeight,
+                             Math.Max(1, last - first + 1) * _cellWidth, _cellHeight),
+                    tint);
             }
         }
 
