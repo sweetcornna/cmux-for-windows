@@ -378,7 +378,7 @@ jobs:
           test "$("$CMUX_ZIG" version)" = "${{ steps.zig-sdk-version.outputs.version }}"
           bash cmux-tui/bindings/conformance/e2e.sh --require python,typescript,rust,go,java
 
-  windows-experimental:
+  windows:
     name: windows (x86_64-gnu)
     runs-on: windows-latest
     timeout-minutes: 40
@@ -423,8 +423,14 @@ jobs:
         run: |
           # State-root initialization is the first thing any session does, so a
           # Unix-only assumption there makes cmux-tui unstartable on Windows.
+          # `shell: bash` runs with -e, so capture the status before asserting:
+          # otherwise a failing run aborts here and never prints why.
+          set +e
+          output="$(cargo test -p cmux-tui-core --lib --target x86_64-pc-windows-gnu --locked workspace_registry::tests:: 2>&1)"
+          status=$?
+          set -e
+          printf '%s\n' "$output"
+          test "$status" -eq 0
           # Assert a non-zero passed count: a filter that matches nothing still
           # exits 0, which would let this step pass without running anything.
-          output="$(cargo test -p cmux-tui-core --lib --target x86_64-pc-windows-gnu --locked workspace_registry::tests:: 2>&1)"
-          printf '%s\n' "$output"
           grep -qE 'test result: ok\. [1-9][0-9]* passed' <<<"$output"

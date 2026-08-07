@@ -11069,8 +11069,8 @@ mod tests {
                     .expect("secure private test socket directory");
             }
             let path = directory.join(format!("{label}.sock"));
-            // `sun_path` length is a Unix constraint, and its checker is
-            // gated to Unix; Windows AF_UNIX has no equivalent limit here.
+            // Windows AF_UNIX caps `sun_path` too, but the checker is gated to
+            // Unix, so there is nothing to call here.
             #[cfg(unix)]
             assert!(unix_socket_path_fits(&path));
             Self { directory, path }
