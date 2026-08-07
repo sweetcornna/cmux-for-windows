@@ -77,6 +77,12 @@ public sealed partial class TerminalView : UserControl, IDisposable
         _timer.Interval = TimeSpan.FromMilliseconds(16);
         _timer.Tick += (_, _) => Poll();
 
+        // A click has to move focus here or every keystroke goes to whatever
+        // the shell focused first (the search box). CanvasControl can mark
+        // pointer events handled, so handledEventsToo is required.
+        AddHandler(PointerPressedEvent,
+            new PointerEventHandler((_, _) => TakeFocus("pointer")), true);
+
         Diag.Log("TerminalView ctor");
         Loaded += OnLoaded;
         // Deliberately NOT disposing on Unloaded: TabView unloads and reloads
@@ -118,7 +124,17 @@ public sealed partial class TerminalView : UserControl, IDisposable
         Diag.Log($"Loaded size={ActualWidth}x{ActualHeight}");
         SyncGrid();
         _timer.Start();
-        Focus(FocusState.Programmatic);
+        // Loaded can run before the window is activated, and focus does not
+        // stick then. Queue a second attempt once the tree is live.
+        TakeFocus("loaded");
+        DispatcherQueue.TryEnqueue(() => TakeFocus("queued"));
+    }
+
+    private void TakeFocus(string reason)
+    {
+        var ok = Focus(FocusState.Programmatic);
+        var holder = FocusManager.GetFocusedElement(XamlRoot)?.GetType().Name ?? "none";
+        Diag.Log($"focus({reason}) granted={ok} holder={holder}");
     }
 
 
@@ -360,6 +376,7 @@ public sealed partial class TerminalView : UserControl, IDisposable
 
     private void OnCharacterReceived(UIElement sender, CharacterReceivedRoutedEventArgs args)
     {
+        Diag.Log($"char '{args.Character}' session={(_session == IntPtr.Zero ? "null" : "ok")}");
         // Printable input, including anything produced by an IME.
         Send(Encoding.UTF8.GetBytes(args.Character.ToString()));
         args.Handled = true;
@@ -367,6 +384,7 @@ public sealed partial class TerminalView : UserControl, IDisposable
 
     private void OnKeyDown(object sender, KeyRoutedEventArgs e)
     {
+        Diag.Log($"keydown {e.Key}");
         // Keys that never arrive as characters.
         byte[]? bytes = e.Key switch
         {
