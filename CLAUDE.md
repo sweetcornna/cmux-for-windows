@@ -54,9 +54,34 @@ If the iPhone is unreachable at build time, the reload still completes: the sign
 
 `ios/scripts/reload.sh` and `scripts/mobile-dev-launch.sh` auto-sign-in from `~/.secrets/cmuxterm-dev.env`. If the phone lands on the login screen or the helper reports missing credentials, do not ask the user to authenticate every build. Tell them to run `scripts/setup-team-dev.sh` once; it verifies their Stack login and writes the file chmod 600. Manual fallback: create it with `CMUX_DOGFOOD_STACK_EMAIL=...` and `CMUX_DOGFOOD_STACK_PASSWORD=...`.
 
+## Windows builds (cmux-tui)
+
+This repository carries native Windows support for `cmux-tui`. The macOS app is out of scope on Windows: `Sources/` and `Packages/macOS/` are SwiftUI/AppKit, so the tagged `reload.sh` flow above is macOS-only. The Windows target is `x86_64-pc-windows-gnu`; there is no MSVC-ABI build.
+
+```bash
+cd cmux-tui
+cargo build -p cmux-tui --target x86_64-pc-windows-gnu --locked
+cargo test -p cmux-tui-core --lib --target x86_64-pc-windows-gnu --locked workspace_registry::tests::
+```
+
+On a `windows-gnu` rustup host the final link needs `cargo rustc ... -- -C link-self-contained=y`, because rustc otherwise links through an external mingw GCC and fails on `___chkstk_ms`. CI does not need it: its host is MSVC, so `host != target` and rustc already infers self-contained linking. `cmux-tui/docs/windows.md` is the canonical reference and must stay accurate whenever Windows behavior changes.
+
+Hard rules. Each already caused a real bug:
+
+- **Never `File::open` a directory.** `CreateFileW` cannot return a directory handle without `FILE_FLAG_BACKUP_SEMANTICS`, so the Unix "fsync the parent after creating an entry" idiom fails with "Access is denied" and made cmux-tui unstartable. Use `platform::sync_directory()`.
+- **Close handles before deleting.** Unix allows unlinking an open file; Windows returns `ERROR_SHARING_VIOLATION`. Drop registries and files before `remove_dir_all`, especially in tests.
+- **Platform decisions live in `cmux-tui-core::platform`,** not inline `cfg` blocks at call sites.
+- **A test referencing a `cfg(unix)` item must carry its own `cfg(unix)`.** Otherwise the whole Windows test harness fails to build, which silently costs every Windows test rather than one.
+- **Do not widen the Windows surface by deleting a `cfg(unix)` gate.** `cmux-remote` is Unix-only because it uses `tokio::net::Unix*` at ~47 sites; porting it means moving that transport to named pipes, not removing gates.
+- **Build-script target selection must not assume `host == target` means "native is correct".** Zig resolves a native Windows target to the MSVC ABI, which never matches a `*-windows-gnu` rust target.
+
+Windows CI is the `windows` job in `.github/workflows/cmux-tui.yml`. That workflow is `workflow_dispatch:` only, so it does not run on push or pull request; dispatch it explicitly with `gh workflow run cmux-tui.yml --ref <sha>` when Windows behavior changes.
+
 ## Regression test commits
 
 Two commits, so CI proves the test catches the bug: commit 1 adds the failing test only (CI red), commit 2 adds the fix (CI green). This is visible in the PR Commits tab.
+
+For `cmux-tui` changes, that proof is not automatic: the workflow is manual-dispatch only, so either dispatch it on both commits or state in the PR that the red/green was verified locally and how.
 
 ## First pass, then dogfood
 
@@ -72,6 +97,7 @@ Notify through `cmux notify` so the user can leave and return. Handoff: `--title
 
 Each of these has full detail in the skill named in parentheses.
 
+- **Windows portability** (`cmux-tui/docs/windows.md`): directory fsync, open-file deletion, and `cfg(unix)` leakage into tests each broke the Windows build once. Read the Windows section above before touching `cmux-tui-core::platform`, `workspace_registry`, or `ghostty-vt-sys/build.rs`.
 - **Typing-latency-sensitive paths** (`cmux-debugging`): `WindowTerminalHostView.hitTest()` in `TerminalWindowPortal.swift`, `TabItemView` in `ContentView.swift`, and `TerminalSurface.forceRefresh()` in `GhosttyTerminalView.swift` run on every keystroke. Read the skill before touching them.
 - **SwiftUI list boundaries** (`cmux-debugging`): no view below a `LazyVStack`/`LazyHStack`/`List`/`ForEach` boundary may hold an observable store reference, and no function called from `body` may write state. Violating either reintroduces the 100% CPU spin loop from https://github.com/manaflow-ai/cmux/issues/2586. Reference pattern: `IndexSectionActions` / `SectionGapActions` / `SessionSearchFn` in `Sources/SessionIndexView.swift`.
 - **Do not add an app-level display link or manual `ghostty_surface_draw` loop.** Rely on Ghostty wakeups and its renderer, or typing lags.
