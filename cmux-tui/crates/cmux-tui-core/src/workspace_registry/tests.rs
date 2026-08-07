@@ -1415,6 +1415,8 @@ fn resource_ids_survive_registry_restart() {
     assert_eq!(after.tabs, before.tabs);
     assert_eq!(after.browsers, before.browsers);
     assert_ne!(after.generation, before.generation);
+    // Windows refuses to delete files that are still open.
+    drop(registry);
     fs::remove_dir_all(root).unwrap();
 }
 
@@ -1898,6 +1900,8 @@ fn durable_commit_recovers_and_changes_generation() {
     assert_ne!(snapshot.generation, first.1);
     assert_eq!(snapshot.revision, 1);
     assert_eq!(snapshot.workspaces[0].key, "one");
+    // Windows refuses to delete files that are still open.
+    drop(recovered);
     fs::remove_dir_all(root).unwrap();
 }
 
@@ -2066,6 +2070,8 @@ fn frontend_projection_is_durable_cas_and_exactly_once() {
         .unwrap();
     assert_eq!(recovered.projection_revision, 1);
     assert_eq!(recovered.projection["columns"][0]["workspace"], "one");
+    // Windows refuses to delete files that are still open.
+    drop(registry);
     fs::remove_dir_all(root).unwrap();
 }
 
@@ -2112,6 +2118,8 @@ fn personal_and_shared_frontend_projections_coexist_and_restore_independently() 
         registry.get_frontend_projection("cmux-tui", "personal", "pairing-room").unwrap().is_none(),
         "scope participates in projection identity"
     );
+    // Windows refuses to delete files that are still open.
+    drop(registry);
     fs::remove_dir_all(root).unwrap();
 }
 
@@ -3099,6 +3107,8 @@ fn schema_four_backfills_safe_browser_restart_metadata() {
         migrated.resource_topology_snapshot().unwrap().browsers,
         vec![RegistryBrowser::recreate(browser, "https://cmux.dev/migrate".into(), 80, 24,)]
     );
+    // Windows refuses to delete files that are still open.
+    drop(migrated);
     fs::remove_dir_all(root).unwrap();
 }
 
@@ -3127,6 +3137,8 @@ fn schema_one_migrates_transactionally_to_terminal_registry() {
         required_meta(&migrated.connection, "schema_version").unwrap(),
         SCHEMA_VERSION.to_string()
     );
+    // Windows refuses to delete files that are still open.
+    drop(migrated);
     fs::remove_dir_all(root).unwrap();
 }
 

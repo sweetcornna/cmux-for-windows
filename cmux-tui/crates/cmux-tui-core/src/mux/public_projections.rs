@@ -141,6 +141,8 @@ mod tests {
         }
     }
 
+    // Exercises a hosted-terminal placeholder, which only exists on Unix.
+    #[cfg(unix)]
     #[test]
     fn zero_view_terminal_projections_restore_by_stable_content_identity() {
         let terminal = TerminalPublicId::parse("term_00000000000000000000000000000001").unwrap();
