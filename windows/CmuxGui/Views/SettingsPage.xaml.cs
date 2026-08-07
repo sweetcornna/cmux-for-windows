@@ -447,6 +447,7 @@ public sealed partial class SettingsPage : Page
 
     private void OnContextMenuToggled(object sender, RoutedEventArgs e)
     {
+        Diag.Log($"context menu toggled on={ContextMenuToggle.IsOn} loading={_loading}");
         if (_loading)
         {
             return;
@@ -455,6 +456,7 @@ public sealed partial class SettingsPage : Page
             ? ShellIntegration.Register(S("ContextMenu_OpenWindow"), S("ContextMenu_OpenWorkspace"))
             : ShellIntegration.Unregister();
 
+        Diag.Log($"context menu register/unregister returned {ok}");
         ContextMenuStatus.Text = ok ? string.Empty : S("Settings_ContextMenuFailed");
         if (!ok)
         {

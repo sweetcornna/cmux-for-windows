@@ -77,7 +77,10 @@ public sealed partial class TerminalView : UserControl, IDisposable
             BorderBrush = Application.Current.Resources["CardStrokeColorDefaultBrush"] as Brush,
         };
         IsTabStop = true;
-        UseSystemFocusVisuals = true;
+        // No focus rectangle. A terminal signals focus with its cursor, and the
+        // system visual draws a bright frame around the whole grid the moment
+        // focus is taken programmatically at startup.
+        UseSystemFocusVisuals = false;
 
         // Transparent clear lets the terminal background carry an alpha and
         // composite over the image and the window backdrop beneath it.
@@ -97,7 +100,7 @@ public sealed partial class TerminalView : UserControl, IDisposable
         // the shell focused first (the search box). CanvasControl can mark
         // pointer events handled, so handledEventsToo is required.
         AddHandler(PointerPressedEvent,
-            new PointerEventHandler((_, _) => TakeFocus("pointer")), true);
+            new PointerEventHandler((_, _) => TakeFocus("pointer", FocusState.Pointer)), true);
 
         Diag.Log("TerminalView ctor");
         Loaded += OnLoaded;
@@ -142,13 +145,13 @@ public sealed partial class TerminalView : UserControl, IDisposable
         _timer.Start();
         // Loaded can run before the window is activated, and focus does not
         // stick then. Queue a second attempt once the tree is live.
-        TakeFocus("loaded");
-        DispatcherQueue.TryEnqueue(() => TakeFocus("queued"));
+        TakeFocus("loaded", FocusState.Programmatic);
+        DispatcherQueue.TryEnqueue(() => TakeFocus("queued", FocusState.Programmatic));
     }
 
-    private void TakeFocus(string reason)
+    private void TakeFocus(string reason, FocusState state)
     {
-        var ok = Focus(FocusState.Programmatic);
+        var ok = Focus(state);
         var holder = FocusManager.GetFocusedElement(XamlRoot)?.GetType().Name ?? "none";
         Diag.Log($"focus({reason}) granted={ok} holder={holder}");
     }

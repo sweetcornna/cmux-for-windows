@@ -215,26 +215,34 @@
 
             <!-- Windows integration -->
             <TextBlock x:Name="IntegrationHeader" Style="{StaticResource BodyStrongTextBlockStyle}" Margin="0,20,0,6" />
-            <Expander Style="{StaticResource Card}">
-                <Expander.Header>
-                    <Grid ColumnSpacing="16" Padding="0,10">
+
+            <!-- A plain row, not an Expander: an Expander header is a
+                 ToggleButton and swallows clicks aimed at controls inside it,
+                 which is why the switch never toggled. -->
+            <Border Background="{ThemeResource CardBackgroundFillColorDefaultBrush}"
+                    BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}"
+                    BorderThickness="1" CornerRadius="4" Padding="16,12" Margin="0,0,0,4">
+                <StackPanel Spacing="8">
+                    <Grid ColumnSpacing="16">
                         <Grid.ColumnDefinitions>
                             <ColumnDefinition Width="Auto" />
                             <ColumnDefinition Width="*" />
                             <ColumnDefinition Width="Auto" />
                         </Grid.ColumnDefinitions>
-                        <FontIcon Grid.Column="0" Glyph="&#xE71D;" FontSize="18" />
+                        <FontIcon Grid.Column="0" Glyph="&#xE71D;" FontSize="18" VerticalAlignment="Center" />
                         <StackPanel Grid.Column="1" VerticalAlignment="Center">
                             <TextBlock x:Name="ContextMenuLabel" />
                             <TextBlock x:Name="ContextMenuDesc" Style="{StaticResource CaptionTextBlockStyle}"
+                                       TextWrapping="Wrap"
                                        Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
                         </StackPanel>
-                        <ToggleSwitch x:Name="ContextMenuToggle" Grid.Column="2" Toggled="OnContextMenuToggled" />
+                        <ToggleSwitch x:Name="ContextMenuToggle" Grid.Column="2"
+                                      VerticalAlignment="Center" Toggled="OnContextMenuToggled" />
                     </Grid>
-                </Expander.Header>
-                <TextBlock x:Name="ContextMenuStatus" Padding="0,10"
-                           Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
-            </Expander>
+                    <TextBlock x:Name="ContextMenuStatus" TextWrapping="Wrap"
+                               Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                </StackPanel>
+            </Border>
 
             <!-- Language -->
             <Expander Style="{StaticResource Card}">

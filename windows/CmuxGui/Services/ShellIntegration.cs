@@ -44,6 +44,7 @@ public static class ShellIntegration
     public static bool Register(string openWindowLabel, string openWorkspaceLabel)
     {
         var exe = ExecutablePath();
+        Diag.Log($"context menu register exe='{exe}'");
         if (string.IsNullOrEmpty(exe))
         {
             return false;
