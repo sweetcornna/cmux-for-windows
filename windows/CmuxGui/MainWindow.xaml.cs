@@ -12,6 +12,8 @@ public sealed partial class MainWindow : Window
     private int _tabCounter;
     /// <summary>Guards the two-way sync between nav selection and tab selection.</summary>
     private bool _syncing;
+    /// <summary>Focus is pointless before this: see <see cref="FocusSelectedTerminal"/>.</summary>
+    private bool _windowActivated;
 
     public MainWindow()
     {
@@ -44,9 +46,29 @@ public sealed partial class MainWindow : Window
         {
             return;
         }
+        _windowActivated = true;
+        FocusSelectedTerminal("window-activated");
+    }
+
+    /// <summary>
+    /// Focus the visible terminal, once that is actually possible.
+    ///
+    /// Two things have to have happened, in either order, and at startup they
+    /// arrive in the unhelpful one: the window activates before the first tab's
+    /// content is in the visual tree. Focusing an unloaded element silently does
+    /// nothing, and the activation never repeats, so the terminal stayed
+    /// unfocused until the user clicked it. Both paths call this, and whichever
+    /// completes last is the one that takes focus.
+    /// </summary>
+    private void FocusSelectedTerminal(string reason)
+    {
+        if (!_windowActivated)
+        {
+            return;
+        }
         if (Tabs.SelectedItem is TabViewItem { Content: TerminalView view })
         {
-            view.FocusTerminal();
+            view.FocusTerminal(reason);
         }
     }
 
@@ -122,6 +144,9 @@ public sealed partial class MainWindow : Window
         _tabCounter++;
         var title = $"PowerShell {_tabCounter}";
         var view = new TerminalView();
+        // The other half of the startup race: if the window already activated
+        // while this was still being built, this is the event that grants focus.
+        view.Loaded += (_, _) => FocusSelectedTerminal("tab-loaded");
         var tab = new TabViewItem
         {
             Header = title,

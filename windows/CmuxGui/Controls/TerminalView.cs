@@ -176,8 +176,8 @@ public sealed partial class TerminalView : UserControl, IDisposable
         DispatcherQueue.TryEnqueue(() => TakeFocus("queued", FocusState.Programmatic));
     }
 
-    /// <summary>Give the grid keyboard focus. Called when the window activates.</summary>
-    public void FocusTerminal() => TakeFocus("window-activated", FocusState.Programmatic);
+    /// <summary>Give the grid keyboard focus. The owning window decides when.</summary>
+    public void FocusTerminal(string reason) => TakeFocus(reason, FocusState.Programmatic);
 
     private void TakeFocus(string reason, FocusState state)
     {
@@ -186,6 +186,9 @@ public sealed partial class TerminalView : UserControl, IDisposable
         // surfaces as a stowed exception that kills the app at startup.
         if (XamlRoot is null)
         {
+            // Logged, not swallowed: a focus request that quietly evaporates is
+            // exactly how the terminal ended up unfocused at startup.
+            Diag.Log($"focus({reason}) skipped: not in the visual tree");
             return;
         }
         try
