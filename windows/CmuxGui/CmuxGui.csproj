@@ -19,7 +19,22 @@
          0x80670016 rather than falling back. Carrying our own copy makes the
          app independent of whatever runtime a given machine happens to have. -->
     <WindowsAppSDKSelfContained>true</WindowsAppSDKSelfContained>
+    <!-- Single-project MSIX. Packaging by hand from a publish drop silently
+         loses the compiled XAML (*.xbf) and the app's resource index, and the
+         result crashes inside Microsoft.UI.Xaml.dll before reaching Main.
+         Only windows\scripts\package.ps1 turns packaging on, so an ordinary
+         build still produces the unpackaged dev app. -->
+    <EnableMsixTooling>true</EnableMsixTooling>
   </PropertyGroup>
+
+  <!-- Only when packaging. Declaring the manifest while WindowsPackageType is
+       None is an outright configuration error, so an ordinary dev build must
+       not see this item at all. package.ps1 supplies the property. -->
+  <ItemGroup Condition="'$(WindowsPackageType)' != 'None'">
+    <AppxManifest Include="Package.appxmanifest">
+      <SubType>Designer</SubType>
+    </AppxManifest>
+  </ItemGroup>
 
   <ItemGroup>
     <PackageReference Include="Microsoft.WindowsAppSDK" Version="1.6.250228001" />
@@ -27,10 +42,19 @@
     <PackageReference Include="Microsoft.Graphics.Win2D" Version="1.3.2" />
   </ItemGroup>
 
-  <!-- Localized strings. Windows picks the closest match to the user's
-       language list at runtime, with en-US as the fallback. -->
+  <!-- Localized strings live in Strings\<lang>\Resources.resw. They need no
+       ItemGroup: the SDK includes .resw as PRIResource by default, and listing
+       them again is a duplicate-item error once MSIX tooling is on. Windows
+       picks the closest match to the user's language list at runtime, with
+       en-US as the fallback. -->
+
+  <!-- Package tile and Start menu icons. These have to be Content, not loose
+       files: Package.appxmanifest names them by path, and makeappx fails
+       validation if the payload does not actually contain them. -->
   <ItemGroup>
-    <PRIResource Include="Strings\**\Resources.resw" />
+    <Content Include="Assets\*.png">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </Content>
   </ItemGroup>
 
   <!-- Bundled Ghostty-format themes, so theme switching works without a
