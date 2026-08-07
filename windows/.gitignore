@@ -1,0 +1,3 @@
+stage-*/
+dist/
+signing/*.pfx
