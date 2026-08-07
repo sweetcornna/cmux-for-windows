@@ -241,13 +241,16 @@ public sealed partial class TerminalView : UserControl, IDisposable
 
     private void OnDraw(CanvasControl sender, CanvasDrawEventArgs args)
     {
-        Diag.Log($"OnDraw cells={_cellCount} grid={_frame.Cols}x{_frame.Rows} bg=0x{_frame.DefaultBg:X6} fg=0x{_frame.DefaultFg:X6}");
         var ds = args.DrawingSession;
         // Before the first snapshot the frame carries no colours yet.
         var background = _frame.Cols == 0 ? _themeBackground : _frame.DefaultBg;
         var opaque = FromPacked(background, Colors.Black);
-        var alpha = (byte)Math.Clamp(AppSettings.Current.TerminalOpacity * 255.0, 0, 255);
-        ds.Clear(Color.FromArgb(alpha, opaque.R, opaque.G, opaque.B));
+        var opacity = AppSettings.Current.TerminalOpacity;
+        // Blending every frame against the backdrop is what makes the window
+        // shimmer, so only do it when transparency was actually asked for.
+        ds.Clear(opacity >= 0.999
+            ? opaque
+            : Color.FromArgb((byte)Math.Clamp(opacity * 255.0, 0, 255), opaque.R, opaque.G, opaque.B));
 
         if (_cellCount == 0 || _frame.Cols == 0)
         {

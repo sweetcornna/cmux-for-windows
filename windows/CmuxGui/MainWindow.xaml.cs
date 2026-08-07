@@ -4,13 +4,11 @@ using CmuxGui.Services;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Media;
-using Microsoft.Windows.ApplicationModel.Resources;
 
 namespace CmuxGui;
 
 public sealed partial class MainWindow : Window
 {
-    private readonly ResourceLoader _res = new();
     private int _tabCounter;
 
     public MainWindow()
@@ -22,13 +20,20 @@ public sealed partial class MainWindow : Window
         ExtendsContentIntoTitleBar = true;
         SetTitleBar(AppTitleBar);
 
-        NavSearch.PlaceholderText = _res.GetString("Nav_Search");
-        WorkspacesHeader.Content = _res.GetString("Nav_Workspaces");
+        Relocalize();
 
         ApplyAppearance();
         AppSettings.Changed += ApplyAppearance;
+        AppSettings.Changed += Relocalize;
 
         AddTerminalTab();
+    }
+
+    /// <summary>Re-read chrome strings, so a language change shows up at once.</summary>
+    private void Relocalize()
+    {
+        NavSearch.PlaceholderText = Loc.S("Nav_Search");
+        WorkspacesHeader.Content = Loc.S("Nav_Workspaces");
     }
 
     /// <summary>Apply the window-level parts of the appearance settings.</summary>

@@ -8,14 +8,12 @@ using CmuxGui.Services;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Controls.Primitives;
-using Microsoft.Windows.ApplicationModel.Resources;
 using Windows.Storage.Pickers;
 
 namespace CmuxGui.Views;
 
 public sealed partial class SettingsPage : Page
 {
-    private readonly ResourceLoader _res = new();
     private readonly AppSettings _settings = AppSettings.Current;
 
     /// <summary>Language options as (display name, BCP-47 tag); empty tag follows the system.</summary>
@@ -37,7 +35,7 @@ public sealed partial class SettingsPage : Page
         _loading = false;
     }
 
-    private string S(string key) => _res.GetString(key);
+    private static string S(string key) => Loc.S(key);
 
     private void Localize()
     {
@@ -248,7 +246,58 @@ public sealed partial class SettingsPage : Page
         }
         var index = Math.Clamp(LanguageCombo.SelectedIndex, 0, Languages.Length - 1);
         _settings.Language = Languages[index].Tag;
+        Loc.SetLanguage(_settings.Language);
         Commit();
+        Relocalize();
+    }
+
+    /// <summary>
+    /// Re-read every string after a language change.
+    ///
+    /// Applying immediately is worth the extra code: a setting that silently
+    /// needs a restart is indistinguishable from one that does not work.
+    /// </summary>
+    private void Relocalize()
+    {
+        _loading = true;
+        try
+        {
+            Localize();
+
+            // Combo items carry translated text, so rebuild them while holding
+            // each selection.
+            var theme = ThemeCombo.SelectedIndex;
+            ThemeCombo.Items.Clear();
+            ThemeCombo.Items.Add(S("Settings_FollowConfig"));
+            foreach (var name in ThemeCatalog.Names())
+            {
+                ThemeCombo.Items.Add(name);
+            }
+            ThemeCombo.SelectedIndex = Math.Clamp(theme, 0, ThemeCombo.Items.Count - 1);
+
+            RebuildCombo(AppThemeCombo, new[] { S("Option_System"), S("Option_Light"), S("Option_Dark") });
+            RebuildCombo(BackdropCombo, new[] { S("Option_Mica"), S("Option_Acrylic"), S("Option_None") });
+            RebuildCombo(LanguageCombo, Languages
+                .Select(l => string.IsNullOrEmpty(l.Display) ? S("Option_System") : l.Display)
+                .ToArray());
+
+            UpdateBackgroundPathText();
+        }
+        finally
+        {
+            _loading = false;
+        }
+    }
+
+    private static void RebuildCombo(ComboBox combo, string[] labels)
+    {
+        var selected = combo.SelectedIndex;
+        combo.Items.Clear();
+        foreach (var label in labels)
+        {
+            combo.Items.Add(label);
+        }
+        combo.SelectedIndex = Math.Clamp(selected, 0, labels.Length - 1);
     }
 
     private void OnContextMenuToggled(object sender, RoutedEventArgs e)
