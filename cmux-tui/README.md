@@ -6,6 +6,7 @@
 
 - [Docs index](docs/README.md)
 - [Getting started](docs/getting-started.md)
+- [Windows](docs/windows.md)
 - [Remote daemon and clients](docs/remote.md)
 - [Remote workspace RPC contract](spec/remote-rpc.md)
 - [Concepts](docs/concepts.md)
@@ -28,9 +29,11 @@ cd cmux-tui
 cargo build -p cmux-tui
 ```
 
+Windows targets `x86_64-pc-windows-gnu` and needs mingw-w64 GCC and libclang on top of that. See [Windows](docs/windows.md) for the build, the support matrix, and two linker/bindgen pitfalls worth reading before you start.
+
 ## Run
 
-`machine-agent` is available only on Unix platforms.
+`machine-agent` and the remote daemon commands are available only on Unix platforms; on Windows they are compiled out and exit with a message.
 
 ```bash
 cd cmux-tui

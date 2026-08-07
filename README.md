@@ -7,6 +7,14 @@
   </a>
 </p>
 
+> **This fork adds native Windows support for `cmux-tui`,** the Rust terminal
+> multiplexer in this repository. Terminals run on ConPTY and the public
+> resource CLI works unchanged; the remote daemon and machine commands remain
+> Unix-only. The macOS app itself is unchanged and still macOS-only.
+> See [cmux-tui/docs/windows.md](cmux-tui/docs/windows.md) for the support
+> matrix and build instructions. Translated READMEs below describe upstream
+> cmux and do not yet mention this.
+
 <p align="center">
   English | <a href="README.ja.md">日本語</a> | <a href="README.vi.md">Tiếng Việt</a> | <a href="README.zh-CN.md">简体中文</a> | <a href="README.zh-TW.md">繁體中文</a> | <a href="README.ko.md">한국어</a> | <a href="README.de.md">Deutsch</a> | <a href="README.es.md">Español</a> | <a href="README.fr.md">Français</a> | <a href="README.it.md">Italiano</a> | <a href="README.da.md">Dansk</a> | <a href="README.pl.md">Polski</a> | <a href="README.ru.md">Русский</a> | <a href="README.bs.md">Bosanski</a> | <a href="README.ar.md">العربية</a> | <a href="README.no.md">Norsk</a> | <a href="README.pt-BR.md">Português (Brasil)</a> | <a href="README.th.md">ไทย</a> | <a href="README.tr.md">Türkçe</a> | <a href="README.km.md">ភាសាខ្មែរ</a> | <a href="README.uk.md">Українська</a>
 </p>

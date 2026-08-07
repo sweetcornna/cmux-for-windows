@@ -5,6 +5,7 @@
 ## Contents
 
 - [Getting started](getting-started.md): build prerequisites, local and headless runs, sockets, detach and attach.
+- [Windows](windows.md): support matrix, `x86_64-pc-windows-gnu` build, ConPTY terminals, and the portability rules that keep it working.
 - [Concepts](concepts.md): session tree, focus, collapse behavior, tab naming, smart split, terminals, and browsers.
 - [Keyboard](keyboard.md): prefix model, modeless Alt layer, default bindings, and `cmux-tui.json` key remapping.
 - [Mouse](mouse.md): clickable UI, drag reorder, resize, scrollbars, menus, selection, pointer shape, and dialogs.
