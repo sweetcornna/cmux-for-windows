@@ -1,0 +1,68 @@
+<Window
+    x:Class="CmuxGui.MainWindow"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:controls="using:CmuxGui.Controls"
+    xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+    xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+    mc:Ignorable="d"
+    Title="cmux">
+
+    <!-- Mica is what gives Settings its depth. Taking it from the system means
+         light/dark, accent, and transparency all follow the OS automatically. -->
+    <Window.SystemBackdrop>
+        <MicaBackdrop Kind="BaseAlt" />
+    </Window.SystemBackdrop>
+
+    <Grid>
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="*" />
+        </Grid.RowDefinitions>
+
+        <!-- Draggable title bar region, so the caption blends into the app. -->
+        <Grid x:Name="AppTitleBar" Grid.Row="0" Height="40" Padding="12,0,0,0">
+            <TextBlock
+                Text="cmux"
+                VerticalAlignment="Center"
+                Style="{StaticResource CaptionTextBlockStyle}" />
+        </Grid>
+
+        <NavigationView
+            x:Name="Nav"
+            Grid.Row="1"
+            PaneDisplayMode="Left"
+            OpenPaneLength="280"
+            IsBackButtonVisible="Collapsed"
+            IsSettingsVisible="True"
+            SelectionChanged="OnNavSelectionChanged">
+
+            <NavigationView.AutoSuggestBox>
+                <AutoSuggestBox QueryIcon="Find" PlaceholderText="Search sessions" />
+            </NavigationView.AutoSuggestBox>
+
+            <NavigationView.MenuItems>
+                <NavigationViewItemHeader Content="Workspaces" />
+            </NavigationView.MenuItems>
+
+            <Grid>
+                <!-- The same control Windows Terminal uses for its tab strip.
+                     It hosts the selected tab's content itself, so the terminal
+                     lives inside the TabViewItem rather than a separate host. -->
+                <!-- TabView's default style aligns it to the top, so it
+                     collapses to the height of its tab strip and gives content
+                     zero height. Stretching is required to host a terminal. -->
+                <TabView
+                    x:Name="Tabs"
+                    VerticalAlignment="Stretch"
+                    IsAddTabButtonVisible="True"
+                    AddTabButtonClick="OnAddTab"
+                    TabCloseRequested="OnCloseTab" />
+
+                <!-- Settings overlays the terminal rather than replacing the
+                     tab strip, so sessions keep running while it is open. -->
+                <Frame x:Name="SettingsFrame" Visibility="Collapsed" />
+            </Grid>
+        </NavigationView>
+    </Grid>
+</Window>

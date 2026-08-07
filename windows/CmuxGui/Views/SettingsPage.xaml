@@ -1,0 +1,123 @@
+<Page
+    x:Class="CmuxGui.Views.SettingsPage"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+    xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+    mc:Ignorable="d">
+
+    <ScrollViewer Padding="36,24,36,24">
+        <StackPanel Spacing="4" MaxWidth="1000">
+
+            <TextBlock Text="Settings" Style="{StaticResource TitleTextBlockStyle}" Margin="0,0,0,16" />
+
+            <TextBlock Text="Appearance" Style="{StaticResource BodyStrongTextBlockStyle}" Margin="0,12,0,4" />
+
+            <!-- Expander cards are the Settings idiom: a summary row that opens
+                 into detail, rather than a wall of controls. -->
+            <Expander HorizontalAlignment="Stretch" HorizontalContentAlignment="Stretch" IsExpanded="True">
+                <Expander.Header>
+                    <Grid ColumnSpacing="16" Padding="0,8">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="Auto" />
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="Auto" />
+                        </Grid.ColumnDefinitions>
+                        <FontIcon Grid.Column="0" Glyph="&#xE790;" FontSize="20" />
+                        <StackPanel Grid.Column="1" VerticalAlignment="Center">
+                            <TextBlock Text="Theme" />
+                            <TextBlock
+                                Text="Follows the system theme by default"
+                                Style="{StaticResource CaptionTextBlockStyle}"
+                                Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                        </StackPanel>
+                        <ComboBox Grid.Column="2" x:Name="ThemeCombo" MinWidth="140" SelectedIndex="0"
+                                  SelectionChanged="OnThemeChanged">
+                            <ComboBoxItem Content="Use system setting" />
+                            <ComboBoxItem Content="Light" />
+                            <ComboBoxItem Content="Dark" />
+                        </ComboBox>
+                    </Grid>
+                </Expander.Header>
+                <StackPanel Spacing="12" Padding="0,8">
+                    <ToggleSwitch x:Name="MicaToggle" Header="Mica backdrop" IsOn="True" />
+                    <ToggleSwitch x:Name="AcrylicTabsToggle" Header="Translucent tab strip" IsOn="False" />
+                </StackPanel>
+            </Expander>
+
+            <TextBlock Text="Terminal" Style="{StaticResource BodyStrongTextBlockStyle}" Margin="0,20,0,4" />
+
+            <Expander HorizontalAlignment="Stretch" HorizontalContentAlignment="Stretch">
+                <Expander.Header>
+                    <Grid ColumnSpacing="16" Padding="0,8">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="Auto" />
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="Auto" />
+                        </Grid.ColumnDefinitions>
+                        <FontIcon Grid.Column="0" Glyph="&#xE8D2;" FontSize="20" />
+                        <StackPanel Grid.Column="1" VerticalAlignment="Center">
+                            <TextBlock Text="Font" />
+                            <TextBlock
+                                Text="Used for terminal cells"
+                                Style="{StaticResource CaptionTextBlockStyle}"
+                                Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                        </StackPanel>
+                        <ComboBox Grid.Column="2" x:Name="FontCombo" MinWidth="180" SelectedIndex="0">
+                            <ComboBoxItem Content="Cascadia Mono" />
+                            <ComboBoxItem Content="Consolas" />
+                            <ComboBoxItem Content="Courier New" />
+                        </ComboBox>
+                    </Grid>
+                </Expander.Header>
+                <StackPanel Spacing="12" Padding="0,8">
+                    <Slider x:Name="FontSizeSlider" Header="Font size" Minimum="8" Maximum="32" Value="14" />
+                    <ToggleSwitch x:Name="CursorBlinkToggle" Header="Blinking cursor" IsOn="True" />
+                </StackPanel>
+            </Expander>
+
+            <TextBlock Text="Shell" Style="{StaticResource BodyStrongTextBlockStyle}" Margin="0,20,0,4" />
+
+            <Expander HorizontalAlignment="Stretch" HorizontalContentAlignment="Stretch">
+                <Expander.Header>
+                    <Grid ColumnSpacing="16" Padding="0,8">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="Auto" />
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="Auto" />
+                        </Grid.ColumnDefinitions>
+                        <FontIcon Grid.Column="0" Glyph="&#xE756;" FontSize="20" />
+                        <StackPanel Grid.Column="1" VerticalAlignment="Center">
+                            <TextBlock Text="Default shell" />
+                            <TextBlock
+                                x:Name="ShellPathText"
+                                Text="Resolved automatically: pwsh, then powershell, then cmd"
+                                Style="{StaticResource CaptionTextBlockStyle}"
+                                Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                        </StackPanel>
+                    </Grid>
+                </Expander.Header>
+                <TextBox x:Name="ShellOverrideBox" Header="Override command" PlaceholderText="Leave empty to auto-detect" Margin="0,8" />
+            </Expander>
+
+            <TextBlock Text="About" Style="{StaticResource BodyStrongTextBlockStyle}" Margin="0,20,0,4" />
+            <Expander HorizontalAlignment="Stretch" HorizontalContentAlignment="Stretch">
+                <Expander.Header>
+                    <StackPanel Padding="0,8">
+                        <TextBlock Text="cmux for Windows" />
+                        <TextBlock
+                            x:Name="VersionText"
+                            Style="{StaticResource CaptionTextBlockStyle}"
+                            Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                    </StackPanel>
+                </Expander.Header>
+                <TextBlock
+                    Padding="0,8"
+                    TextWrapping="Wrap"
+                    Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                    Text="Terminals run on ConPTY through the cmux engine, the same engine the cmux TUI uses." />
+            </Expander>
+
+        </StackPanel>
+    </ScrollViewer>
+</Page>
