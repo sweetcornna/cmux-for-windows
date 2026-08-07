@@ -27,6 +27,20 @@
     <PackageReference Include="Microsoft.Graphics.Win2D" Version="1.3.2" />
   </ItemGroup>
 
+  <!-- Localized strings. Windows picks the closest match to the user's
+       language list at runtime, with en-US as the fallback. -->
+  <ItemGroup>
+    <PRIResource Include="Strings\**\Resources.resw" />
+  </ItemGroup>
+
+  <!-- Bundled Ghostty-format themes, so theme switching works without a
+       Ghostty install. User themes in %APPDATA%\ghostty\themes take priority. -->
+  <ItemGroup>
+    <Content Include="Assets\Themes\*.conf">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </Content>
+  </ItemGroup>
+
   <!-- The engine. Built by cargo; copied next to the app so P/Invoke finds it. -->
   <ItemGroup>
     <None Include="..\..\cmux-tui\target\x86_64-pc-windows-gnu\debug\cmux_ffi.dll"

@@ -1,6 +1,7 @@
 using System;
 using System.Text;
 using CmuxGui.Interop;
+using CmuxGui.Services;
 using Microsoft.Graphics.Canvas;
 using Microsoft.Graphics.Canvas.Text;
 using Microsoft.Graphics.Canvas.UI.Xaml;
@@ -8,6 +9,8 @@ using Microsoft.UI;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Input;
+using Microsoft.UI.Xaml.Media;
+using Microsoft.UI.Xaml.Media.Imaging;
 using Windows.Foundation;
 using Windows.System;
 using Windows.UI;
@@ -26,6 +29,15 @@ public sealed partial class TerminalView : UserControl, IDisposable
 {
     private readonly CanvasControl _canvas = new();
     private readonly DispatcherTimer _timer = new();
+    // The image sits under a transparent canvas, so terminal opacity reveals it
+    // rather than the canvas having to composite the bitmap itself.
+    private readonly Grid _root = new();
+    private readonly Image _backgroundImage = new()
+    {
+        Stretch = Stretch.UniformToFill,
+        HorizontalAlignment = HorizontalAlignment.Stretch,
+        VerticalAlignment = VerticalAlignment.Stretch,
+    };
 
     private IntPtr _session;
     private CmuxNative.Cell[] _cells = Array.Empty<CmuxNative.Cell>();
@@ -45,9 +57,16 @@ public sealed partial class TerminalView : UserControl, IDisposable
 
     public TerminalView()
     {
-        Content = _canvas;
+        _root.Children.Add(_backgroundImage);
+        _root.Children.Add(_canvas);
+        Content = _root;
         IsTabStop = true;
         UseSystemFocusVisuals = true;
+
+        // Transparent clear lets the terminal background carry an alpha and
+        // composite over the image and the window backdrop beneath it.
+        _canvas.ClearColor = Colors.Transparent;
+        AppSettings.Changed += OnSettingsChanged;
 
         _canvas.Draw += OnDraw;
         _canvas.CreateResources += OnCreateResources;
@@ -132,6 +151,10 @@ public sealed partial class TerminalView : UserControl, IDisposable
                 _status = _session == IntPtr.Zero
                     ? "cmux_session_new returned null"
                     : string.Empty;
+                if (_session != IntPtr.Zero)
+                {
+                    ApplySettings();
+                }
             }
             catch (Exception ex)
             {
@@ -150,6 +173,47 @@ public sealed partial class TerminalView : UserControl, IDisposable
         {
             _cells = new CmuxNative.Cell[needed];
         }
+    }
+
+    private void OnSettingsChanged() => ApplySettings();
+
+    /// <summary>Push the selected theme into the engine and refresh the surface.</summary>
+    private void ApplySettings()
+    {
+        var settings = AppSettings.Current;
+
+        if (_session != IntPtr.Zero && !string.IsNullOrWhiteSpace(settings.Theme))
+        {
+            var text = ThemeCatalog.Read(settings.Theme);
+            if (text is not null)
+            {
+                var bytes = Encoding.UTF8.GetBytes(text);
+                CmuxNative.SessionApplyThemeText(_session, bytes, (nuint)bytes.Length);
+            }
+            else
+            {
+                Diag.Log($"theme '{settings.Theme}' not found");
+            }
+        }
+
+        _backgroundImage.Opacity = settings.BackgroundImageOpacity;
+        _backgroundImage.Source = null;
+        if (!string.IsNullOrWhiteSpace(settings.BackgroundImagePath)
+            && System.IO.File.Exists(settings.BackgroundImagePath))
+        {
+            try
+            {
+                _backgroundImage.Source =
+                    new BitmapImage(new Uri(settings.BackgroundImagePath));
+            }
+            catch (Exception ex)
+            {
+                // A missing or unreadable image should not blank the terminal.
+                Diag.Log($"background image failed: {ex.Message}");
+            }
+        }
+
+        _canvas.Invalidate();
     }
 
     private void Poll()
@@ -181,7 +245,9 @@ public sealed partial class TerminalView : UserControl, IDisposable
         var ds = args.DrawingSession;
         // Before the first snapshot the frame carries no colours yet.
         var background = _frame.Cols == 0 ? _themeBackground : _frame.DefaultBg;
-        ds.Clear(FromPacked(background, Colors.Black));
+        var opaque = FromPacked(background, Colors.Black);
+        var alpha = (byte)Math.Clamp(AppSettings.Current.TerminalOpacity * 255.0, 0, 255);
+        ds.Clear(Color.FromArgb(alpha, opaque.R, opaque.G, opaque.B));
 
         if (_cellCount == 0 || _frame.Cols == 0)
         {
@@ -347,6 +413,7 @@ public sealed partial class TerminalView : UserControl, IDisposable
 
     public void Dispose()
     {
+        AppSettings.Changed -= OnSettingsChanged;
         _timer.Stop();
         if (_session != IntPtr.Zero)
         {

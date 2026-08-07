@@ -6,116 +6,156 @@
     xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
     mc:Ignorable="d">
 
-    <ScrollViewer Padding="36,24,36,24">
-        <StackPanel Spacing="4" MaxWidth="1000">
+    <Page.Resources>
+        <!-- One card shape for every row, so the page reads as a single system
+             rather than a stack of bespoke controls. -->
+        <Style x:Key="Card" TargetType="Expander">
+            <Setter Property="HorizontalAlignment" Value="Stretch" />
+            <Setter Property="HorizontalContentAlignment" Value="Stretch" />
+            <Setter Property="Margin" Value="0,0,0,4" />
+        </Style>
+    </Page.Resources>
 
-            <TextBlock Text="Settings" Style="{StaticResource TitleTextBlockStyle}" Margin="0,0,0,16" />
+    <ScrollViewer Padding="36,20,36,32">
+        <StackPanel Spacing="2" MaxWidth="1000">
 
-            <TextBlock Text="Appearance" Style="{StaticResource BodyStrongTextBlockStyle}" Margin="0,12,0,4" />
+            <TextBlock x:Name="TitleText" Style="{StaticResource TitleTextBlockStyle}" Margin="0,0,0,18" />
 
-            <!-- Expander cards are the Settings idiom: a summary row that opens
-                 into detail, rather than a wall of controls. -->
-            <Expander HorizontalAlignment="Stretch" HorizontalContentAlignment="Stretch" IsExpanded="True">
+            <!-- Appearance -->
+            <TextBlock x:Name="AppearanceHeader" Style="{StaticResource BodyStrongTextBlockStyle}" Margin="0,10,0,6" />
+
+            <Expander Style="{StaticResource Card}" IsExpanded="True">
                 <Expander.Header>
-                    <Grid ColumnSpacing="16" Padding="0,8">
+                    <Grid ColumnSpacing="16" Padding="0,10">
                         <Grid.ColumnDefinitions>
                             <ColumnDefinition Width="Auto" />
                             <ColumnDefinition Width="*" />
                             <ColumnDefinition Width="Auto" />
                         </Grid.ColumnDefinitions>
-                        <FontIcon Grid.Column="0" Glyph="&#xE790;" FontSize="20" />
+                        <FontIcon Grid.Column="0" Glyph="&#xE790;" FontSize="18" />
                         <StackPanel Grid.Column="1" VerticalAlignment="Center">
-                            <TextBlock Text="Theme" />
-                            <TextBlock
-                                Text="Follows the system theme by default"
-                                Style="{StaticResource CaptionTextBlockStyle}"
-                                Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                            <TextBlock x:Name="ThemeLabel" />
+                            <TextBlock x:Name="ThemeDesc" Style="{StaticResource CaptionTextBlockStyle}"
+                                       Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
                         </StackPanel>
-                        <ComboBox Grid.Column="2" x:Name="ThemeCombo" MinWidth="140" SelectedIndex="0"
-                                  SelectionChanged="OnThemeChanged">
-                            <ComboBoxItem Content="Use system setting" />
-                            <ComboBoxItem Content="Light" />
-                            <ComboBoxItem Content="Dark" />
-                        </ComboBox>
+                        <ComboBox x:Name="ThemeCombo" Grid.Column="2" MinWidth="200"
+                                  SelectionChanged="OnThemeChanged" />
                     </Grid>
                 </Expander.Header>
-                <StackPanel Spacing="12" Padding="0,8">
-                    <ToggleSwitch x:Name="MicaToggle" Header="Mica backdrop" IsOn="True" />
-                    <ToggleSwitch x:Name="AcrylicTabsToggle" Header="Translucent tab strip" IsOn="False" />
+                <StackPanel Spacing="14" Padding="0,10">
+                    <ComboBox x:Name="AppThemeCombo" MinWidth="200" SelectionChanged="OnAppThemeChanged" />
+                    <ComboBox x:Name="BackdropCombo" MinWidth="200" SelectionChanged="OnBackdropChanged" />
+                    <Slider x:Name="OpacitySlider" Minimum="20" Maximum="100"
+                            ValueChanged="OnOpacityChanged" />
+                    <Slider x:Name="BlurSlider" Minimum="0" Maximum="100"
+                            ValueChanged="OnBlurChanged" />
                 </StackPanel>
             </Expander>
 
-            <TextBlock Text="Terminal" Style="{StaticResource BodyStrongTextBlockStyle}" Margin="0,20,0,4" />
-
-            <Expander HorizontalAlignment="Stretch" HorizontalContentAlignment="Stretch">
+            <!-- Background image -->
+            <Expander Style="{StaticResource Card}">
                 <Expander.Header>
-                    <Grid ColumnSpacing="16" Padding="0,8">
+                    <Grid ColumnSpacing="16" Padding="0,10">
                         <Grid.ColumnDefinitions>
                             <ColumnDefinition Width="Auto" />
                             <ColumnDefinition Width="*" />
                             <ColumnDefinition Width="Auto" />
                         </Grid.ColumnDefinitions>
-                        <FontIcon Grid.Column="0" Glyph="&#xE8D2;" FontSize="20" />
+                        <FontIcon Grid.Column="0" Glyph="&#xEB9F;" FontSize="18" />
                         <StackPanel Grid.Column="1" VerticalAlignment="Center">
-                            <TextBlock Text="Font" />
-                            <TextBlock
-                                Text="Used for terminal cells"
-                                Style="{StaticResource CaptionTextBlockStyle}"
-                                Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                            <TextBlock x:Name="BackgroundLabel" />
+                            <TextBlock x:Name="BackgroundPathText" Style="{StaticResource CaptionTextBlockStyle}"
+                                       TextTrimming="CharacterEllipsis"
+                                       Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
                         </StackPanel>
-                        <ComboBox Grid.Column="2" x:Name="FontCombo" MinWidth="180" SelectedIndex="0">
-                            <ComboBoxItem Content="Cascadia Mono" />
-                            <ComboBoxItem Content="Consolas" />
-                            <ComboBoxItem Content="Courier New" />
-                        </ComboBox>
+                        <StackPanel Grid.Column="2" Orientation="Horizontal" Spacing="8">
+                            <Button x:Name="ChooseImageButton" Click="OnChooseImage" />
+                            <Button x:Name="ClearImageButton" Click="OnClearImage" />
+                        </StackPanel>
                     </Grid>
                 </Expander.Header>
-                <StackPanel Spacing="12" Padding="0,8">
-                    <Slider x:Name="FontSizeSlider" Header="Font size" Minimum="8" Maximum="32" Value="14" />
-                    <ToggleSwitch x:Name="CursorBlinkToggle" Header="Blinking cursor" IsOn="True" />
-                </StackPanel>
+                <Slider x:Name="ImageOpacitySlider" Minimum="0" Maximum="100"
+                        ValueChanged="OnImageOpacityChanged" Padding="0,10" />
             </Expander>
 
-            <TextBlock Text="Shell" Style="{StaticResource BodyStrongTextBlockStyle}" Margin="0,20,0,4" />
-
-            <Expander HorizontalAlignment="Stretch" HorizontalContentAlignment="Stretch">
+            <!-- Terminal -->
+            <TextBlock x:Name="TerminalHeader" Style="{StaticResource BodyStrongTextBlockStyle}" Margin="0,20,0,6" />
+            <Expander Style="{StaticResource Card}">
                 <Expander.Header>
-                    <Grid ColumnSpacing="16" Padding="0,8">
+                    <Grid ColumnSpacing="16" Padding="0,10">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="Auto" />
+                            <ColumnDefinition Width="*" />
+                        </Grid.ColumnDefinitions>
+                        <FontIcon Grid.Column="0" Glyph="&#xE8D2;" FontSize="18" />
+                        <StackPanel Grid.Column="1" VerticalAlignment="Center">
+                            <TextBlock x:Name="FontLabel" />
+                            <TextBlock x:Name="FontDesc" Style="{StaticResource CaptionTextBlockStyle}"
+                                       Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                        </StackPanel>
+                    </Grid>
+                </Expander.Header>
+                <TextBlock x:Name="FontValueText" Padding="0,10"
+                           Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+            </Expander>
+
+            <!-- Windows integration -->
+            <TextBlock x:Name="IntegrationHeader" Style="{StaticResource BodyStrongTextBlockStyle}" Margin="0,20,0,6" />
+            <Expander Style="{StaticResource Card}">
+                <Expander.Header>
+                    <Grid ColumnSpacing="16" Padding="0,10">
                         <Grid.ColumnDefinitions>
                             <ColumnDefinition Width="Auto" />
                             <ColumnDefinition Width="*" />
                             <ColumnDefinition Width="Auto" />
                         </Grid.ColumnDefinitions>
-                        <FontIcon Grid.Column="0" Glyph="&#xE756;" FontSize="20" />
+                        <FontIcon Grid.Column="0" Glyph="&#xE71D;" FontSize="18" />
                         <StackPanel Grid.Column="1" VerticalAlignment="Center">
-                            <TextBlock Text="Default shell" />
-                            <TextBlock
-                                x:Name="ShellPathText"
-                                Text="Resolved automatically: pwsh, then powershell, then cmd"
-                                Style="{StaticResource CaptionTextBlockStyle}"
-                                Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                            <TextBlock x:Name="ContextMenuLabel" />
+                            <TextBlock x:Name="ContextMenuDesc" Style="{StaticResource CaptionTextBlockStyle}"
+                                       Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
                         </StackPanel>
+                        <ToggleSwitch x:Name="ContextMenuToggle" Grid.Column="2" Toggled="OnContextMenuToggled" />
                     </Grid>
                 </Expander.Header>
-                <TextBox x:Name="ShellOverrideBox" Header="Override command" PlaceholderText="Leave empty to auto-detect" Margin="0,8" />
+                <TextBlock x:Name="ContextMenuStatus" Padding="0,10"
+                           Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
             </Expander>
 
-            <TextBlock Text="About" Style="{StaticResource BodyStrongTextBlockStyle}" Margin="0,20,0,4" />
-            <Expander HorizontalAlignment="Stretch" HorizontalContentAlignment="Stretch">
+            <!-- Language -->
+            <Expander Style="{StaticResource Card}">
                 <Expander.Header>
-                    <StackPanel Padding="0,8">
+                    <Grid ColumnSpacing="16" Padding="0,10">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="Auto" />
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="Auto" />
+                        </Grid.ColumnDefinitions>
+                        <FontIcon Grid.Column="0" Glyph="&#xF2B7;" FontSize="18" />
+                        <StackPanel Grid.Column="1" VerticalAlignment="Center">
+                            <TextBlock x:Name="LanguageLabel" />
+                            <TextBlock x:Name="LanguageDesc" Style="{StaticResource CaptionTextBlockStyle}"
+                                       Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                        </StackPanel>
+                        <ComboBox x:Name="LanguageCombo" Grid.Column="2" MinWidth="200"
+                                  SelectionChanged="OnLanguageChanged" />
+                    </Grid>
+                </Expander.Header>
+                <TextBlock Padding="0,10" Visibility="Collapsed" />
+            </Expander>
+
+            <!-- About -->
+            <TextBlock x:Name="AboutHeader" Style="{StaticResource BodyStrongTextBlockStyle}" Margin="0,20,0,6" />
+            <Expander Style="{StaticResource Card}">
+                <Expander.Header>
+                    <StackPanel Padding="0,10">
                         <TextBlock Text="cmux for Windows" />
-                        <TextBlock
-                            x:Name="VersionText"
-                            Style="{StaticResource CaptionTextBlockStyle}"
-                            Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                        <TextBlock x:Name="VersionText" Style="{StaticResource CaptionTextBlockStyle}"
+                                   Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
                     </StackPanel>
                 </Expander.Header>
-                <TextBlock
-                    Padding="0,8"
-                    TextWrapping="Wrap"
-                    Foreground="{ThemeResource TextFillColorSecondaryBrush}"
-                    Text="Terminals run on ConPTY through the cmux engine, the same engine the cmux TUI uses." />
+                <TextBlock x:Name="AboutDesc" Padding="0,10" TextWrapping="Wrap"
+                           Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
             </Expander>
 
         </StackPanel>

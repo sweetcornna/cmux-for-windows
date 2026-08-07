@@ -8,11 +8,8 @@
     mc:Ignorable="d"
     Title="cmux">
 
-    <!-- Mica is what gives Settings its depth. Taking it from the system means
-         light/dark, accent, and transparency all follow the OS automatically. -->
-    <Window.SystemBackdrop>
-        <MicaBackdrop Kind="BaseAlt" />
-    </Window.SystemBackdrop>
+    <!-- The backdrop is assigned in code so it can follow the Mica / Acrylic /
+         None setting instead of being fixed at markup time. -->
 
     <Grid>
         <Grid.RowDefinitions>
@@ -38,11 +35,11 @@
             SelectionChanged="OnNavSelectionChanged">
 
             <NavigationView.AutoSuggestBox>
-                <AutoSuggestBox QueryIcon="Find" PlaceholderText="Search sessions" />
+                <AutoSuggestBox x:Name="NavSearch" QueryIcon="Find" />
             </NavigationView.AutoSuggestBox>
 
             <NavigationView.MenuItems>
-                <NavigationViewItemHeader Content="Workspaces" />
+                <NavigationViewItemHeader x:Name="WorkspacesHeader" />
             </NavigationView.MenuItems>
 
             <Grid>

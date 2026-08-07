@@ -77,7 +77,11 @@ impl GhosttyConfig {
         config
     }
 
-    fn apply(&mut self, text: &str) {
+    /// Merge a config fragment over the current values.
+    ///
+    /// Later keys win, which is how a theme is layered under a user's own
+    /// config and how a runtime theme switch is layered over it.
+    pub fn apply(&mut self, text: &str) {
         for (key, value) in entries(text) {
             match key {
                 "background" => self.background = parse_color(value),

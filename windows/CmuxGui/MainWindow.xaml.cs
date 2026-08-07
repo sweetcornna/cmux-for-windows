@@ -1,12 +1,16 @@
 using System;
 using CmuxGui.Controls;
+using CmuxGui.Services;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
+using Microsoft.UI.Xaml.Media;
+using Microsoft.Windows.ApplicationModel.Resources;
 
 namespace CmuxGui;
 
 public sealed partial class MainWindow : Window
 {
+    private readonly ResourceLoader _res = new();
     private int _tabCounter;
 
     public MainWindow()
@@ -18,7 +22,38 @@ public sealed partial class MainWindow : Window
         ExtendsContentIntoTitleBar = true;
         SetTitleBar(AppTitleBar);
 
+        NavSearch.PlaceholderText = _res.GetString("Nav_Search");
+        WorkspacesHeader.Content = _res.GetString("Nav_Workspaces");
+
+        ApplyAppearance();
+        AppSettings.Changed += ApplyAppearance;
+
         AddTerminalTab();
+    }
+
+    /// <summary>Apply the window-level parts of the appearance settings.</summary>
+    private void ApplyAppearance()
+    {
+        var settings = AppSettings.Current;
+
+        SystemBackdrop = settings.Backdrop switch
+        {
+            BackdropKind.Mica => new MicaBackdrop { Kind = Microsoft.UI.Composition.SystemBackdrops.MicaKind.BaseAlt },
+            // Acrylic is the blurred one; its tint opacity is what "blur
+            // amount" maps to, since WinUI exposes no blur radius directly.
+            BackdropKind.Acrylic => new DesktopAcrylicBackdrop(),
+            _ => null,
+        };
+
+        if (Content is FrameworkElement root)
+        {
+            root.RequestedTheme = settings.AppTheme switch
+            {
+                "Light" => ElementTheme.Light,
+                "Dark" => ElementTheme.Dark,
+                _ => ElementTheme.Default,
+            };
+        }
     }
 
     private void AddTerminalTab()

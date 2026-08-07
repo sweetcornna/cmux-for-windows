@@ -1,0 +1,118 @@
+<?xml version="1.0" encoding="utf-8"?>
+<root>
+  <resheader name="resmimetype"><value>text/microsoft-resx</value></resheader>
+  <resheader name="version"><value>2.0</value></resheader>
+  <resheader name="reader"><value>System.Resources.ResXResourceReader, System.Windows.Forms, Version=4.0.0.0, Culture=neutral, PublicKeyToken=b77a5c561934e089</value></resheader>
+  <resheader name="writer"><value>System.Resources.ResXResourceWriter, System.Windows.Forms, Version=4.0.0.0, Culture=neutral, PublicKeyToken=b77a5c561934e089</value></resheader>
+  <data name="Nav_Search" xml:space="preserve">
+    <value>Search sessions</value>
+  </data>
+  <data name="Nav_Workspaces" xml:space="preserve">
+    <value>Workspaces</value>
+  </data>
+  <data name="Settings_Title" xml:space="preserve">
+    <value>Settings</value>
+  </data>
+  <data name="Settings_Appearance" xml:space="preserve">
+    <value>Appearance</value>
+  </data>
+  <data name="Settings_Theme" xml:space="preserve">
+    <value>Terminal theme</value>
+  </data>
+  <data name="Settings_ThemeDesc" xml:space="preserve">
+    <value>Colour scheme and palette</value>
+  </data>
+  <data name="Settings_FollowConfig" xml:space="preserve">
+    <value>Follow Ghostty config</value>
+  </data>
+  <data name="Settings_AppTheme" xml:space="preserve">
+    <value>App theme</value>
+  </data>
+  <data name="Settings_AppThemeDesc" xml:space="preserve">
+    <value>Follows the system theme by default</value>
+  </data>
+  <data name="Settings_Backdrop" xml:space="preserve">
+    <value>Window material</value>
+  </data>
+  <data name="Settings_BackdropDesc" xml:space="preserve">
+    <value>How the window paints behind its content</value>
+  </data>
+  <data name="Settings_Blur" xml:space="preserve">
+    <value>Blur amount</value>
+  </data>
+  <data name="Settings_Opacity" xml:space="preserve">
+    <value>Terminal opacity</value>
+  </data>
+  <data name="Settings_Background" xml:space="preserve">
+    <value>Background image</value>
+  </data>
+  <data name="Settings_BackgroundDesc" xml:space="preserve">
+    <value>Shown behind the terminal grid</value>
+  </data>
+  <data name="Settings_ImageOpacity" xml:space="preserve">
+    <value>Image opacity</value>
+  </data>
+  <data name="Settings_Choose" xml:space="preserve">
+    <value>Choose…</value>
+  </data>
+  <data name="Settings_Clear" xml:space="preserve">
+    <value>Clear</value>
+  </data>
+  <data name="Settings_Terminal" xml:space="preserve">
+    <value>Terminal</value>
+  </data>
+  <data name="Settings_Font" xml:space="preserve">
+    <value>Font</value>
+  </data>
+  <data name="Settings_FontDesc" xml:space="preserve">
+    <value>Taken from your Ghostty config</value>
+  </data>
+  <data name="Settings_Language" xml:space="preserve">
+    <value>Language</value>
+  </data>
+  <data name="Settings_LanguageDesc" xml:space="preserve">
+    <value>Restart cmux to apply</value>
+  </data>
+  <data name="Settings_Integration" xml:space="preserve">
+    <value>Windows integration</value>
+  </data>
+  <data name="Settings_ContextMenu" xml:space="preserve">
+    <value>Explorer context menu</value>
+  </data>
+  <data name="Settings_ContextMenuDesc" xml:space="preserve">
+    <value>Add “Open in cmux” entries for folders</value>
+  </data>
+  <data name="Settings_About" xml:space="preserve">
+    <value>About</value>
+  </data>
+  <data name="Settings_AboutDesc" xml:space="preserve">
+    <value>Terminals run on ConPTY through the Ghostty VT engine, the same engine the cmux TUI uses.</value>
+  </data>
+  <data name="Option_System" xml:space="preserve">
+    <value>Use system setting</value>
+  </data>
+  <data name="Option_Light" xml:space="preserve">
+    <value>Light</value>
+  </data>
+  <data name="Option_Dark" xml:space="preserve">
+    <value>Dark</value>
+  </data>
+  <data name="Option_Mica" xml:space="preserve">
+    <value>Mica</value>
+  </data>
+  <data name="Option_Acrylic" xml:space="preserve">
+    <value>Acrylic</value>
+  </data>
+  <data name="Option_None" xml:space="preserve">
+    <value>None</value>
+  </data>
+  <data name="ContextMenu_OpenWindow" xml:space="preserve">
+    <value>Open in cmux</value>
+  </data>
+  <data name="ContextMenu_OpenWorkspace" xml:space="preserve">
+    <value>Open as cmux workspace</value>
+  </data>
+  <data name="Settings_ContextMenuFailed" xml:space="preserve">
+    <value>Could not update the context menu. See the log for details.</value>
+  </data>
+</root>

@@ -83,6 +83,9 @@ internal static partial class CmuxNative
     [LibraryImport(Library, EntryPoint = "cmux_session_resize")]
     public static partial int SessionResize(IntPtr session, ushort cols, ushort rows);
 
+    [LibraryImport(Library, EntryPoint = "cmux_session_apply_theme_text", StringMarshalling = StringMarshalling.Utf8)]
+    public static partial int SessionApplyThemeText(IntPtr session, ReadOnlySpan<byte> text, nuint len);
+
     [LibraryImport(Library, EntryPoint = "cmux_session_snapshot")]
     public static partial int SessionSnapshot(
         IntPtr session,

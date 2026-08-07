@@ -233,6 +233,49 @@ pub unsafe extern "C" fn cmux_session_resize(
     }
 }
 
+/// Apply a Ghostty-format theme to a live session.
+///
+/// `text` is the contents of a theme file, not a path: the frontend owns
+/// theme discovery (bundled assets plus the user's `themes` directory) and
+/// this side owns parsing, so the ABI never grows a filesystem layout.
+///
+/// Keys absent from the theme fall back to the user's Ghostty config, so
+/// switching themes does not silently discard a configured font or cursor.
+///
+/// # Safety
+/// `session` must be live, and `text` must point to `len` readable bytes.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn cmux_session_apply_theme_text(
+    session: *mut CmuxSession,
+    text: *const u8,
+    len: usize,
+) -> i32 {
+    if session.is_null() || (text.is_null() && len != 0) {
+        return CMUX_ERR_NULL;
+    }
+    let session = unsafe { &mut *session };
+    let bytes = if len == 0 { &[][..] } else { unsafe { std::slice::from_raw_parts(text, len) } };
+    let Ok(text) = std::str::from_utf8(bytes) else {
+        return CMUX_ERR_ENGINE;
+    };
+
+    // Start from the user's config so a theme that only sets colours keeps
+    // their font and anything else it does not mention.
+    let mut config = GhosttyConfig::load();
+    config.apply(text);
+
+    session.surface.set_default_colors(DefaultColors {
+        fg: Some(config.foreground.unwrap_or(ghostty_config::DEFAULT_FOREGROUND)),
+        bg: Some(config.background.unwrap_or(ghostty_config::DEFAULT_BACKGROUND)),
+        cursor: config.cursor_color,
+        selection_bg: config.selection_background,
+        selection_fg: config.selection_foreground,
+        palette: config.palette,
+        ..DefaultColors::default()
+    });
+    0
+}
+
 /// Copy the current grid into `cells` and frame state into `frame`.
 ///
 /// Returns the number of cells written, or a negative error code. Cells are
