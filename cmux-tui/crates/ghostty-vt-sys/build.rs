@@ -43,7 +43,15 @@ fn main() {
         .arg("-Demit-lib-vt=true")
         .arg("-Demit-xcframework=false")
         .arg("-Doptimize=ReleaseFast");
-    if target != host
+    // Zig resolves a native Windows target to the MSVC ABI, which never matches
+    // a `*-windows-gnu` rust target: without a Windows SDK the build fails with
+    // LibCKernel32LibNotFound, and with one it silently produces an MSVC-ABI
+    // archive that windows-gnu rustc cannot link. CI only ever cross-builds
+    // (msvc host -> gnu target) so `target != host` covered it there, but a
+    // machine whose rustup host is windows-gnu needs the triple spelled out for
+    // its own native build too.
+    let needs_explicit_zig_target = target != host || target.ends_with("windows-gnu");
+    if needs_explicit_zig_target
         && let Some(zig_target) = zig_target_for_rust_target(&target)
     {
         command.arg(format!("-Dtarget={zig_target}"));

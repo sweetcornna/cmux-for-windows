@@ -617,6 +617,23 @@ pub fn restrict_file(path: &Path) -> std::io::Result<()> {
     restrict_permissions(path, 0o600)
 }
 
+/// Durably persist a directory entry created or renamed inside `path`.
+///
+/// Unix needs an fsync on the parent directory for the new entry to survive a
+/// crash. Windows has no equivalent operation: `File::open` cannot obtain a
+/// directory handle without `FILE_FLAG_BACKUP_SEMANTICS`, and `FlushFileBuffers`
+/// rejects directory handles even when one is opened that way, so attempting it
+/// only produces "Access is denied". Ordering there is left to the filesystem.
+#[cfg(unix)]
+pub fn sync_directory(path: &Path) -> std::io::Result<()> {
+    std::fs::File::open(path)?.sync_all()
+}
+
+#[cfg(not(unix))]
+pub fn sync_directory(_path: &Path) -> std::io::Result<()> {
+    Ok(())
+}
+
 pub fn is_executable_file(path: &Path) -> bool {
     let Ok(meta) = std::fs::metadata(path) else { return false };
     if !meta.is_file() {
