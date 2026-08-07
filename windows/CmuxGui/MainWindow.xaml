@@ -11,7 +11,14 @@
     <!-- The backdrop is assigned in code so it can follow the Mica / Acrylic /
          None setting instead of being fixed at markup time. -->
 
-    <Grid>
+    <Grid x:Name="RootGrid">
+        <!-- Window background layers, beneath all chrome: solid colour, then
+             image, then a scrim that keeps the chrome legible over a photo. -->
+        <Image x:Name="AppBackgroundImage" Stretch="UniformToFill"
+               HorizontalAlignment="Stretch" VerticalAlignment="Stretch" />
+        <Rectangle x:Name="AppBackgroundMask" />
+
+        <Grid>
         <Grid.RowDefinitions>
             <RowDefinition Height="Auto" />
             <RowDefinition Height="*" />
@@ -66,5 +73,6 @@
                 <Frame x:Name="SettingsFrame" Visibility="Collapsed" />
             </Grid>
         </NavigationView>
+        </Grid>
     </Grid>
 </Window>

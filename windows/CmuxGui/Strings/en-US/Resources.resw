@@ -115,4 +115,31 @@
   <data name="Settings_ContextMenuFailed" xml:space="preserve">
     <value>Could not update the context menu. See the log for details.</value>
   </data>
+  <data name="Settings_TermBg" xml:space="preserve">
+    <value>Terminal background</value>
+  </data>
+  <data name="Settings_TermFg" xml:space="preserve">
+    <value>Terminal text</value>
+  </data>
+  <data name="Settings_TermMask" xml:space="preserve">
+    <value>Image mask</value>
+  </data>
+  <data name="Settings_MaskOpacity" xml:space="preserve">
+    <value>Mask strength</value>
+  </data>
+  <data name="Settings_AppBg" xml:space="preserve">
+    <value>Window colour</value>
+  </data>
+  <data name="Settings_AppBackground" xml:space="preserve">
+    <value>Window background</value>
+  </data>
+  <data name="Settings_AppBackgroundDesc" xml:space="preserve">
+    <value>Shown behind the whole app</value>
+  </data>
+  <data name="Settings_AppMask" xml:space="preserve">
+    <value>Window mask</value>
+  </data>
+  <data name="Settings_ImageOpacityShort" xml:space="preserve">
+    <value>Image opacity</value>
+  </data>
 </root>

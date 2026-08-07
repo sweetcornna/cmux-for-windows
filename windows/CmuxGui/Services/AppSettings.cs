@@ -37,11 +37,44 @@ public sealed class AppSettings
     /// <summary>Acrylic blur strength, 0.0 to 1.0. Only meaningful for Acrylic.</summary>
     public double BlurAmount { get; set; } = 0.5;
 
-    /// <summary>Absolute path to a background image, or empty for none.</summary>
+    // ---- Terminal surface ----
+
+    /// <summary>Terminal background override, "#RRGGBB"; empty uses the theme.</summary>
+    public string TerminalBackground { get; set; } = string.Empty;
+
+    /// <summary>Terminal text colour override, "#RRGGBB"; empty uses the theme.</summary>
+    public string TerminalForeground { get; set; } = string.Empty;
+
+    /// <summary>Absolute path to a terminal background image, or empty for none.</summary>
     public string BackgroundImagePath { get; set; } = string.Empty;
 
-    /// <summary>Background image alpha, so text stays readable over a photo.</summary>
+    /// <summary>Terminal background image alpha.</summary>
     public double BackgroundImageOpacity { get; set; } = 0.25;
+
+    /// <summary>
+    /// Scrim laid over the terminal background image.
+    ///
+    /// A photo behind a terminal destroys text contrast; a tinted mask between
+    /// the two is what keeps the grid readable without hiding the image.
+    /// </summary>
+    public string TerminalMaskColor { get; set; } = "#000000";
+
+    public double TerminalMaskOpacity { get; set; } = 0.35;
+
+    // ---- Application surface ----
+
+    /// <summary>Window background override, "#RRGGBB"; empty keeps the system backdrop.</summary>
+    public string AppBackgroundColor { get; set; } = string.Empty;
+
+    /// <summary>Absolute path to a window background image, or empty for none.</summary>
+    public string AppImagePath { get; set; } = string.Empty;
+
+    public double AppImageOpacity { get; set; } = 0.35;
+
+    /// <summary>Scrim over the window background image, so chrome stays legible.</summary>
+    public string AppMaskColor { get; set; } = "#000000";
+
+    public double AppMaskOpacity { get; set; } = 0.35;
 
     /// <summary>BCP-47 tag, or empty to follow the system language.</summary>
     public string Language { get; set; } = string.Empty;

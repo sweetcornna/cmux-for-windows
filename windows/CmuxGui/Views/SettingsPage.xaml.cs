@@ -5,10 +5,13 @@ using System.Linq;
 using System.Reflection;
 using CmuxGui.Interop;
 using CmuxGui.Services;
+using Microsoft.UI;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Controls.Primitives;
 using Windows.Storage.Pickers;
+using Windows.UI;
+using Microsoft.UI.Xaml.Media;
 
 namespace CmuxGui.Views;
 
@@ -62,6 +65,17 @@ public sealed partial class SettingsPage : Page
         ImageOpacitySlider.Header = S("Settings_ImageOpacity");
         AppThemeCombo.Header = S("Settings_AppTheme");
         BackdropCombo.Header = S("Settings_Backdrop");
+        TermBgLabel.Text = S("Settings_TermBg");
+        TermFgLabel.Text = S("Settings_TermFg");
+        TermMaskLabel.Text = S("Settings_TermMask");
+        TermMaskOpacitySlider.Header = S("Settings_MaskOpacity");
+        AppBgLabel.Text = S("Settings_AppBg");
+        AppMaskLabel.Text = S("Settings_AppMask");
+        AppBackgroundLabel.Text = S("Settings_AppBackground");
+        AppImageOpacitySlider.Header = S("Settings_ImageOpacityShort");
+        AppMaskOpacitySlider.Header = S("Settings_MaskOpacity");
+        ChooseAppImageButton.Content = S("Settings_Choose");
+        ClearAppImageButton.Content = S("Settings_Clear");
 
         var version = Assembly.GetExecutingAssembly().GetName().Version;
         VersionText.Text = version is null ? string.Empty : $"Version {version.ToString(3)}";
@@ -101,6 +115,20 @@ public sealed partial class SettingsPage : Page
         BlurSlider.Value = _settings.BlurAmount * 100.0;
         ImageOpacitySlider.Value = _settings.BackgroundImageOpacity * 100.0;
         UpdateBackgroundPathText();
+        UpdateAppBackgroundPathText();
+
+        // An empty override means "use the theme", so seed the picker with what
+        // the terminal is actually showing rather than an arbitrary colour.
+        CmuxNative.ThemeLoad(out var live);
+        BindColor(TermBgPicker, TermBgButton, _settings.TerminalBackground, Packed(live.Background));
+        BindColor(TermFgPicker, TermFgButton, _settings.TerminalForeground, Packed(live.Foreground));
+        BindColor(TermMaskPicker, TermMaskButton, _settings.TerminalMaskColor, Colors.Black);
+        BindColor(AppBgPicker, AppBgButton, _settings.AppBackgroundColor, Colors.Black);
+        BindColor(AppMaskPicker, AppMaskButton, _settings.AppMaskColor, Colors.Black);
+
+        TermMaskOpacitySlider.Value = _settings.TerminalMaskOpacity * 100.0;
+        AppImageOpacitySlider.Value = _settings.AppImageOpacity * 100.0;
+        AppMaskOpacitySlider.Value = _settings.AppMaskOpacity * 100.0;
 
         foreach (var (display, _) in Languages)
         {
@@ -298,6 +326,123 @@ public sealed partial class SettingsPage : Page
             combo.Items.Add(label);
         }
         combo.SelectedIndex = Math.Clamp(selected, 0, labels.Length - 1);
+    }
+
+
+    private static Color Packed(uint value) =>
+        value == CmuxNative.NoColor
+            ? Colors.Black
+            : Color.FromArgb(255, (byte)((value >> 16) & 0xFF), (byte)((value >> 8) & 0xFF), (byte)(value & 0xFF));
+
+    /// <summary>Show a colour on its button and preload the picker with it.</summary>
+    private static void BindColor(ColorPicker picker, Button button, string stored, Color fallback)
+    {
+        var colour = ColorUtil.ParseOr(stored, fallback);
+        picker.Color = colour;
+        Swatch(button, colour);
+    }
+
+    /// <summary>The button *is* the swatch, so the current colour is visible without opening it.</summary>
+    private static void Swatch(Button button, Color colour)
+    {
+        button.Background = new SolidColorBrush(colour);
+        button.Content = ColorUtil.ToHex(colour);
+        // Pick a legible label rather than assuming a dark colour.
+        var luminance = (0.299 * colour.R + 0.587 * colour.G + 0.114 * colour.B) / 255.0;
+        button.Foreground = new SolidColorBrush(luminance > 0.6 ? Colors.Black : Colors.White);
+    }
+
+    private void ApplyColor(Button button, ColorChangedEventArgs e, Action<string> assign)
+    {
+        if (_loading)
+        {
+            return;
+        }
+        Swatch(button, e.NewColor);
+        assign(ColorUtil.ToHex(e.NewColor));
+        Commit();
+    }
+
+    private void OnTermBgChanged(ColorPicker sender, ColorChangedEventArgs e) =>
+        ApplyColor(TermBgButton, e, v => _settings.TerminalBackground = v);
+
+    private void OnTermFgChanged(ColorPicker sender, ColorChangedEventArgs e) =>
+        ApplyColor(TermFgButton, e, v => _settings.TerminalForeground = v);
+
+    private void OnTermMaskChanged(ColorPicker sender, ColorChangedEventArgs e) =>
+        ApplyColor(TermMaskButton, e, v => _settings.TerminalMaskColor = v);
+
+    private void OnAppBgChanged(ColorPicker sender, ColorChangedEventArgs e) =>
+        ApplyColor(AppBgButton, e, v => _settings.AppBackgroundColor = v);
+
+    private void OnAppMaskChanged(ColorPicker sender, ColorChangedEventArgs e) =>
+        ApplyColor(AppMaskButton, e, v => _settings.AppMaskColor = v);
+
+    private void OnTermMaskOpacityChanged(object sender, RangeBaseValueChangedEventArgs e)
+    {
+        if (_loading) { return; }
+        _settings.TerminalMaskOpacity = e.NewValue / 100.0;
+        Commit();
+    }
+
+    private void OnAppImageOpacityChanged(object sender, RangeBaseValueChangedEventArgs e)
+    {
+        if (_loading) { return; }
+        _settings.AppImageOpacity = e.NewValue / 100.0;
+        Commit();
+    }
+
+    private void OnAppMaskOpacityChanged(object sender, RangeBaseValueChangedEventArgs e)
+    {
+        if (_loading) { return; }
+        _settings.AppMaskOpacity = e.NewValue / 100.0;
+        Commit();
+    }
+
+    private void UpdateAppBackgroundPathText()
+    {
+        AppBackgroundPathText.Text = string.IsNullOrWhiteSpace(_settings.AppImagePath)
+            ? S("Settings_AppBackgroundDesc")
+            : Path.GetFileName(_settings.AppImagePath);
+    }
+
+    private async void OnChooseAppImage(object sender, RoutedEventArgs e)
+    {
+        var path = await PickImageAsync();
+        if (path is not null)
+        {
+            _settings.AppImagePath = path;
+            UpdateAppBackgroundPathText();
+            Commit();
+        }
+    }
+
+    private void OnClearAppImage(object sender, RoutedEventArgs e)
+    {
+        _settings.AppImagePath = string.Empty;
+        UpdateAppBackgroundPathText();
+        Commit();
+    }
+
+    /// <summary>Shared picker; unpackaged apps must be given an owner window.</summary>
+    private static async System.Threading.Tasks.Task<string?> PickImageAsync()
+    {
+        try
+        {
+            var picker = new FileOpenPicker();
+            foreach (var ext in new[] { ".png", ".jpg", ".jpeg", ".bmp", ".gif", ".webp" })
+            {
+                picker.FileTypeFilter.Add(ext);
+            }
+            WinRT.Interop.InitializeWithWindow.Initialize(picker, App.MainWindowHandle);
+            var file = await picker.PickSingleFileAsync();
+            return file?.Path;
+        }
+        catch (Exception ex)
+        {
+            Diag.Log($"image picker failed: {ex.Message}");
+            return null;
+        }
     }
 
     private void OnContextMenuToggled(object sender, RoutedEventArgs e)

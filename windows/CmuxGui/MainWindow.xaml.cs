@@ -44,14 +44,49 @@ public sealed partial class MainWindow : Window
     {
         var settings = AppSettings.Current;
 
-        SystemBackdrop = settings.Backdrop switch
+        var hasCustomBackground = !string.IsNullOrWhiteSpace(settings.AppBackgroundColor)
+            || (!string.IsNullOrWhiteSpace(settings.AppImagePath)
+                && System.IO.File.Exists(settings.AppImagePath));
+
+        // A system backdrop paints over anything behind it, so a custom colour
+        // or image can only show if the backdrop is switched off.
+        SystemBackdrop = hasCustomBackground
+            ? null
+            : settings.Backdrop switch
+            {
+                BackdropKind.Mica => new MicaBackdrop { Kind = Microsoft.UI.Composition.SystemBackdrops.MicaKind.BaseAlt },
+                // Acrylic is the blurred one; its tint opacity is what "blur
+                // amount" maps to, since WinUI exposes no blur radius directly.
+                BackdropKind.Acrylic => new DesktopAcrylicBackdrop(),
+                _ => null,
+            };
+
+        RootGrid.Background = ColorUtil.Parse(settings.AppBackgroundColor) is { } bg
+            ? new SolidColorBrush(bg)
+            : null;
+
+        AppBackgroundImage.Opacity = settings.AppImageOpacity;
+        AppBackgroundImage.Source = null;
+        var hasImage = !string.IsNullOrWhiteSpace(settings.AppImagePath)
+            && System.IO.File.Exists(settings.AppImagePath);
+        if (hasImage)
         {
-            BackdropKind.Mica => new MicaBackdrop { Kind = Microsoft.UI.Composition.SystemBackdrops.MicaKind.BaseAlt },
-            // Acrylic is the blurred one; its tint opacity is what "blur
-            // amount" maps to, since WinUI exposes no blur radius directly.
-            BackdropKind.Acrylic => new DesktopAcrylicBackdrop(),
-            _ => null,
-        };
+            try
+            {
+                AppBackgroundImage.Source =
+                    new Microsoft.UI.Xaml.Media.Imaging.BitmapImage(new Uri(settings.AppImagePath));
+            }
+            catch (Exception ex)
+            {
+                Diag.Log($"app background image failed: {ex.Message}");
+            }
+        }
+
+        AppBackgroundMask.Fill = hasImage
+            ? new SolidColorBrush(ColorUtil.WithOpacity(
+                ColorUtil.ParseOr(settings.AppMaskColor, Microsoft.UI.Colors.Black),
+                settings.AppMaskOpacity))
+            : null;
 
         if (Content is FrameworkElement root)
         {

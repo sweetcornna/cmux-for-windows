@@ -38,6 +38,8 @@ public sealed partial class TerminalView : UserControl, IDisposable
         HorizontalAlignment = HorizontalAlignment.Stretch,
         VerticalAlignment = VerticalAlignment.Stretch,
     };
+    /// <summary>Scrim between the image and the grid, so text keeps its contrast.</summary>
+    private readonly Microsoft.UI.Xaml.Shapes.Rectangle _mask = new();
 
     private IntPtr _session;
     private CmuxNative.Cell[] _cells = Array.Empty<CmuxNative.Cell>();
@@ -58,6 +60,7 @@ public sealed partial class TerminalView : UserControl, IDisposable
     public TerminalView()
     {
         _root.Children.Add(_backgroundImage);
+        _root.Children.Add(_mask);
         _root.Children.Add(_canvas);
         // A rounded, clipped surface is what makes terminal content read as a
         // Windows 11 card instead of a raw rectangle butted against the chrome.
@@ -211,24 +214,53 @@ public sealed partial class TerminalView : UserControl, IDisposable
     {
         var settings = AppSettings.Current;
 
-        if (_session != IntPtr.Zero && !string.IsNullOrWhiteSpace(settings.Theme))
+        if (_session != IntPtr.Zero)
         {
-            var text = ThemeCatalog.Read(settings.Theme);
-            if (text is not null)
+            // Colour overrides are expressed as Ghostty config lines appended
+            // after the theme, so the engine parses them and last-wins gives
+            // the user's picks priority. No extra ABI surface is needed.
+            var config = new StringBuilder();
+            if (!string.IsNullOrWhiteSpace(settings.Theme))
             {
-                var bytes = Encoding.UTF8.GetBytes(text);
-                CmuxNative.SessionApplyThemeText(_session, bytes, (nuint)bytes.Length);
+                var text = ThemeCatalog.Read(settings.Theme);
+                if (text is not null)
+                {
+                    config.AppendLine(text);
+                }
+                else
+                {
+                    Diag.Log($"theme '{settings.Theme}' not found");
+                }
             }
-            else
+            if (!string.IsNullOrWhiteSpace(settings.TerminalBackground))
             {
-                Diag.Log($"theme '{settings.Theme}' not found");
+                config.AppendLine($"background = {settings.TerminalBackground}");
+            }
+            if (!string.IsNullOrWhiteSpace(settings.TerminalForeground))
+            {
+                config.AppendLine($"foreground = {settings.TerminalForeground}");
+            }
+
+            if (config.Length > 0)
+            {
+                var bytes = Encoding.UTF8.GetBytes(config.ToString());
+                CmuxNative.SessionApplyThemeText(_session, bytes, (nuint)bytes.Length);
             }
         }
 
         _backgroundImage.Opacity = settings.BackgroundImageOpacity;
         _backgroundImage.Source = null;
-        if (!string.IsNullOrWhiteSpace(settings.BackgroundImagePath)
-            && System.IO.File.Exists(settings.BackgroundImagePath))
+
+        // The scrim only makes sense over an image; without one it would just
+        // dim the terminal's own background for no reason.
+        var hasImage = !string.IsNullOrWhiteSpace(settings.BackgroundImagePath)
+            && System.IO.File.Exists(settings.BackgroundImagePath);
+        _mask.Fill = hasImage
+            ? new SolidColorBrush(ColorUtil.WithOpacity(
+                ColorUtil.ParseOr(settings.TerminalMaskColor, Colors.Black),
+                settings.TerminalMaskOpacity))
+            : null;
+        if (hasImage)
         {
             try
             {

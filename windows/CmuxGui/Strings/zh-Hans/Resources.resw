@@ -115,4 +115,31 @@
   <data name="Settings_ContextMenuFailed" xml:space="preserve">
     <value>无法更新右键菜单，详见日志。</value>
   </data>
+  <data name="Settings_TermBg" xml:space="preserve">
+    <value>终端背景色</value>
+  </data>
+  <data name="Settings_TermFg" xml:space="preserve">
+    <value>终端文字颜色</value>
+  </data>
+  <data name="Settings_TermMask" xml:space="preserve">
+    <value>图片蒙版</value>
+  </data>
+  <data name="Settings_MaskOpacity" xml:space="preserve">
+    <value>蒙版浓度</value>
+  </data>
+  <data name="Settings_AppBg" xml:space="preserve">
+    <value>窗口颜色</value>
+  </data>
+  <data name="Settings_AppBackground" xml:space="preserve">
+    <value>窗口背景</value>
+  </data>
+  <data name="Settings_AppBackgroundDesc" xml:space="preserve">
+    <value>显示在整个应用后面</value>
+  </data>
+  <data name="Settings_AppMask" xml:space="preserve">
+    <value>窗口蒙版</value>
+  </data>
+  <data name="Settings_ImageOpacityShort" xml:space="preserve">
+    <value>图片不透明度</value>
+  </data>
 </root>

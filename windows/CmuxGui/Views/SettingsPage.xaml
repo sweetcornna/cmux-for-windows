@@ -49,6 +49,38 @@
                             ValueChanged="OnOpacityChanged" />
                     <Slider x:Name="BlurSlider" Minimum="0" Maximum="100"
                             ValueChanged="OnBlurChanged" />
+                    <Grid ColumnSpacing="16">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="Auto" />
+                        </Grid.ColumnDefinitions>
+                        <TextBlock x:Name="TermBgLabel" VerticalAlignment="Center" />
+                        <Button x:Name="TermBgButton" Grid.Column="1" MinWidth="120">
+                            <Button.Flyout>
+                                <Flyout>
+                                    <ColorPicker x:Name="TermBgPicker" IsAlphaEnabled="False"
+                                                 IsHexInputVisible="True"
+                                                 ColorChanged="OnTermBgChanged" />
+                                </Flyout>
+                            </Button.Flyout>
+                        </Button>
+                    </Grid>
+                    <Grid ColumnSpacing="16">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="Auto" />
+                        </Grid.ColumnDefinitions>
+                        <TextBlock x:Name="TermFgLabel" VerticalAlignment="Center" />
+                        <Button x:Name="TermFgButton" Grid.Column="1" MinWidth="120">
+                            <Button.Flyout>
+                                <Flyout>
+                                    <ColorPicker x:Name="TermFgPicker" IsAlphaEnabled="False"
+                                                 IsHexInputVisible="True"
+                                                 ColorChanged="OnTermFgChanged" />
+                                </Flyout>
+                            </Button.Flyout>
+                        </Button>
+                    </Grid>
                 </StackPanel>
             </Expander>
 
@@ -74,8 +106,90 @@
                         </StackPanel>
                     </Grid>
                 </Expander.Header>
-                <Slider x:Name="ImageOpacitySlider" Minimum="0" Maximum="100"
-                        ValueChanged="OnImageOpacityChanged" Padding="0,10" />
+                <StackPanel Spacing="14" Padding="0,10">
+                    <Slider x:Name="ImageOpacitySlider" Minimum="0" Maximum="100"
+                            ValueChanged="OnImageOpacityChanged" />
+                    <Grid ColumnSpacing="16">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="Auto" />
+                        </Grid.ColumnDefinitions>
+                        <TextBlock x:Name="TermMaskLabel" VerticalAlignment="Center" />
+                        <Button x:Name="TermMaskButton" Grid.Column="1" MinWidth="120">
+                            <Button.Flyout>
+                                <Flyout>
+                                    <ColorPicker x:Name="TermMaskPicker" IsAlphaEnabled="False"
+                                                 IsHexInputVisible="True"
+                                                 ColorChanged="OnTermMaskChanged" />
+                                </Flyout>
+                            </Button.Flyout>
+                        </Button>
+                    </Grid>
+                    <Slider x:Name="TermMaskOpacitySlider" Minimum="0" Maximum="100"
+                            ValueChanged="OnTermMaskOpacityChanged" />
+                </StackPanel>
+            </Expander>
+
+            <!-- Application background -->
+            <Expander Style="{StaticResource Card}">
+                <Expander.Header>
+                    <Grid ColumnSpacing="16" Padding="0,10">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="Auto" />
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="Auto" />
+                        </Grid.ColumnDefinitions>
+                        <FontIcon Grid.Column="0" Glyph="&#xE790;" FontSize="18" />
+                        <StackPanel Grid.Column="1" VerticalAlignment="Center">
+                            <TextBlock x:Name="AppBackgroundLabel" />
+                            <TextBlock x:Name="AppBackgroundPathText" Style="{StaticResource CaptionTextBlockStyle}"
+                                       TextTrimming="CharacterEllipsis"
+                                       Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                        </StackPanel>
+                        <StackPanel Grid.Column="2" Orientation="Horizontal" Spacing="8">
+                            <Button x:Name="ChooseAppImageButton" Click="OnChooseAppImage" />
+                            <Button x:Name="ClearAppImageButton" Click="OnClearAppImage" />
+                        </StackPanel>
+                    </Grid>
+                </Expander.Header>
+                <StackPanel Spacing="14" Padding="0,10">
+                    <Grid ColumnSpacing="16">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="Auto" />
+                        </Grid.ColumnDefinitions>
+                        <TextBlock x:Name="AppBgLabel" VerticalAlignment="Center" />
+                        <Button x:Name="AppBgButton" Grid.Column="1" MinWidth="120">
+                            <Button.Flyout>
+                                <Flyout>
+                                    <ColorPicker x:Name="AppBgPicker" IsAlphaEnabled="False"
+                                                 IsHexInputVisible="True"
+                                                 ColorChanged="OnAppBgChanged" />
+                                </Flyout>
+                            </Button.Flyout>
+                        </Button>
+                    </Grid>
+                    <Slider x:Name="AppImageOpacitySlider" Minimum="0" Maximum="100"
+                            ValueChanged="OnAppImageOpacityChanged" />
+                    <Grid ColumnSpacing="16">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="Auto" />
+                        </Grid.ColumnDefinitions>
+                        <TextBlock x:Name="AppMaskLabel" VerticalAlignment="Center" />
+                        <Button x:Name="AppMaskButton" Grid.Column="1" MinWidth="120">
+                            <Button.Flyout>
+                                <Flyout>
+                                    <ColorPicker x:Name="AppMaskPicker" IsAlphaEnabled="False"
+                                                 IsHexInputVisible="True"
+                                                 ColorChanged="OnAppMaskChanged" />
+                                </Flyout>
+                            </Button.Flyout>
+                        </Button>
+                    </Grid>
+                    <Slider x:Name="AppMaskOpacitySlider" Minimum="0" Maximum="100"
+                            ValueChanged="OnAppMaskOpacityChanged" />
+                </StackPanel>
             </Expander>
 
             <!-- Terminal -->
