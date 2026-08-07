@@ -34,6 +34,10 @@ public sealed partial class TerminalView : UserControl, IDisposable
 
     private CanvasTextFormat _format = null!;
     private string _status = string.Empty;
+    // Used until the first snapshot arrives, so the very first paint already
+    // shows the Ghostty background instead of flashing a default.
+    private uint _themeBackground = CmuxNative.NoColor;
+    private uint _themeForeground = CmuxNative.NoColor;
     private float _cellWidth = 8;
     private float _cellHeight = 16;
     private ushort _cols;
@@ -66,11 +70,20 @@ public sealed partial class TerminalView : UserControl, IDisposable
 
     private void OnCreateResources(CanvasControl sender, Microsoft.Graphics.Canvas.UI.CanvasCreateResourcesEventArgs args)
     {
-        Diag.Log("CreateResources fired");
+        // Adopt the user's Ghostty font and colours. The engine already resolves
+        // cell colours through the theme palette; what is needed here is the
+        // face to shape with and the surface colour behind the grid.
+        CmuxNative.ThemeLoad(out var theme);
+        var family = CmuxNative.FontFamilyOf(theme);
+        Diag.Log($"CreateResources theme loaded={theme.Loaded} font='{family}' size={theme.FontSize}");
+
+        _themeBackground = theme.Background;
+        _themeForeground = theme.Foreground;
+
         _format = new CanvasTextFormat
         {
-            FontFamily = "Cascadia Mono",
-            FontSize = 14,
+            FontFamily = string.IsNullOrWhiteSpace(family) ? "Cascadia Mono" : family,
+            FontSize = theme.FontSize > 0 ? theme.FontSize : 14,
             WordWrapping = CanvasWordWrapping.NoWrap,
         };
 
@@ -164,9 +177,11 @@ public sealed partial class TerminalView : UserControl, IDisposable
 
     private void OnDraw(CanvasControl sender, CanvasDrawEventArgs args)
     {
-        Diag.Log($"OnDraw cells={_cellCount} grid={_frame.Cols}x{_frame.Rows}");
+        Diag.Log($"OnDraw cells={_cellCount} grid={_frame.Cols}x{_frame.Rows} bg=0x{_frame.DefaultBg:X6} fg=0x{_frame.DefaultFg:X6}");
         var ds = args.DrawingSession;
-        ds.Clear(FromPacked(_frame.DefaultBg, Colors.Black));
+        // Before the first snapshot the frame carries no colours yet.
+        var background = _frame.Cols == 0 ? _themeBackground : _frame.DefaultBg;
+        ds.Clear(FromPacked(background, Colors.Black));
 
         if (_cellCount == 0 || _frame.Cols == 0)
         {
@@ -179,7 +194,7 @@ public sealed partial class TerminalView : UserControl, IDisposable
             return;
         }
 
-        var defaultFg = FromPacked(_frame.DefaultFg, Colors.White);
+        var defaultFg = FromPacked(_frame.DefaultFg, FromPacked(_themeForeground, Colors.White));
 
         for (var row = 0; row < _frame.Rows; row++)
         {

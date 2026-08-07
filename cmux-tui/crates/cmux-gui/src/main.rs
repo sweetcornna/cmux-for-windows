@@ -137,7 +137,8 @@ impl App {
         term.resize(cols, grid_rows)?;
 
         let frame = term.frame()?;
-        let (default_fg, _default_bg) = frame.default_colors;
+        // `default_colors()` returns (background, foreground), in that order.
+        let (_default_bg, default_fg) = frame.default_colors;
 
         let mut quads = layout.quads;
         let mut text = layout.text;

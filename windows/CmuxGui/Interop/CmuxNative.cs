@@ -40,6 +40,37 @@ internal static partial class CmuxNative
         public uint DefaultBg;
     }
 
+    /// <summary>Appearance read from the user's Ghostty config.</summary>
+    [StructLayout(LayoutKind.Sequential)]
+    public unsafe struct Theme
+    {
+        public uint Background;
+        public uint Foreground;
+        public uint Cursor;
+        public uint SelectionBackground;
+        public uint SelectionForeground;
+        public float FontSize;
+        public fixed byte FontFamilyUtf8[128];
+        public byte Loaded;
+        private byte _r0;
+        private byte _r1;
+        private byte _r2;
+    }
+
+    [LibraryImport(Library, EntryPoint = "cmux_theme_load")]
+    public static partial int ThemeLoad(out Theme theme);
+
+    /// <summary>Decode the NUL-terminated font name, or empty if unset.</summary>
+    public static unsafe string FontFamilyOf(in Theme theme)
+    {
+        fixed (byte* p = theme.FontFamilyUtf8)
+        {
+            var span = new ReadOnlySpan<byte>(p, 128);
+            var end = span.IndexOf((byte)0);
+            return System.Text.Encoding.UTF8.GetString(span[..(end < 0 ? 128 : end)]);
+        }
+    }
+
     [LibraryImport(Library, EntryPoint = "cmux_session_new")]
     public static partial IntPtr SessionNew(ushort cols, ushort rows);
 

@@ -8,10 +8,14 @@
 //! Every entry point is null-checked and returns a negative code on failure
 //! instead of unwinding, because unwinding across the ABI is undefined.
 
+pub mod ghostty_config;
+
 use std::sync::Arc;
 
-use cmux_tui_core::{Mux, Surface, SurfaceOptions};
+use cmux_tui_core::{DefaultColors, Mux, Surface, SurfaceOptions};
 use ghostty_vt::{CellWidth, Dirty, RenderState, Rgb};
+
+use ghostty_config::GhosttyConfig;
 
 /// Returned when a pointer argument is null.
 pub const CMUX_ERR_NULL: i32 = -1;
@@ -57,6 +61,68 @@ pub struct CmuxFrame {
     pub default_bg: u32,
 }
 
+/// Presentation settings read from the user's Ghostty config.
+///
+/// The engine already resolves cell colors through the theme palette, so this
+/// is what a frontend needs for the parts the engine does not draw: the window
+/// surface behind the grid, and the font to shape glyphs with.
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct CmuxTheme {
+    pub background: u32,
+    pub foreground: u32,
+    pub cursor: u32,
+    pub selection_background: u32,
+    pub selection_foreground: u32,
+    pub font_size: f32,
+    /// NUL-terminated UTF-8; empty when the config names no font.
+    pub font_family: [u8; 128],
+    /// 1 when a Ghostty config file was actually found.
+    pub loaded: u8,
+    pub _reserved: [u8; 3],
+}
+
+/// Read the user's Ghostty appearance settings.
+///
+/// Always fills `out` with usable values: Ghostty's own defaults when no config
+/// file exists. Returns 0 on success.
+///
+/// # Safety
+/// `out` must point to a writable [`CmuxTheme`].
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn cmux_theme_load(out: *mut CmuxTheme) -> i32 {
+    if out.is_null() {
+        return CMUX_ERR_NULL;
+    }
+    let config = GhosttyConfig::load();
+
+    let mut font_family = [0_u8; 128];
+    if let Some(name) = config.font_family.as_deref() {
+        let bytes = name.as_bytes();
+        // Leave room for the NUL, and never split a UTF-8 sequence.
+        let mut len = bytes.len().min(font_family.len() - 1);
+        while len > 0 && !name.is_char_boundary(len) {
+            len -= 1;
+        }
+        font_family[..len].copy_from_slice(&bytes[..len]);
+    }
+
+    unsafe {
+        *out = CmuxTheme {
+            background: pack(config.background.unwrap_or(ghostty_config::DEFAULT_BACKGROUND)),
+            foreground: pack(config.foreground.unwrap_or(ghostty_config::DEFAULT_FOREGROUND)),
+            cursor: config.cursor_color.map(pack).unwrap_or(CMUX_NO_COLOR),
+            selection_background: config.selection_background.map(pack).unwrap_or(CMUX_NO_COLOR),
+            selection_foreground: config.selection_foreground.map(pack).unwrap_or(CMUX_NO_COLOR),
+            font_size: config.font_size.unwrap_or(0.0),
+            font_family,
+            loaded: u8::from(config.source.is_some()),
+            _reserved: [0; 3],
+        };
+    }
+    0
+}
+
 /// Opaque handle owned by the caller.
 pub struct CmuxSession {
     _mux: Arc<Mux>,
@@ -83,6 +149,22 @@ pub extern "C" fn cmux_session_new(cols: u16, rows: u16) -> *mut CmuxSession {
     let Ok(surface) = mux.new_tab(None, cwd, Some((cols, rows))) else {
         return std::ptr::null_mut();
     };
+
+    // Adopt the user's Ghostty appearance, so cells resolve through the theme
+    // palette. This must come after the surface exists and go through the
+    // surface rather than the mux: `Mux::set_default_colors` only walks
+    // surfaces that already exist, and short-circuits when the stored value is
+    // unchanged, so seeding it earlier would silently apply to nothing.
+    let config = GhosttyConfig::load();
+    surface.set_default_colors(DefaultColors {
+        fg: Some(config.foreground.unwrap_or(ghostty_config::DEFAULT_FOREGROUND)),
+        bg: Some(config.background.unwrap_or(ghostty_config::DEFAULT_BACKGROUND)),
+        cursor: config.cursor_color,
+        selection_bg: config.selection_background,
+        selection_fg: config.selection_foreground,
+        palette: config.palette,
+        ..DefaultColors::default()
+    });
     let Ok(render) = RenderState::new() else {
         return std::ptr::null_mut();
     };
@@ -188,7 +270,8 @@ pub unsafe extern "C" fn cmux_session_snapshot(
     }
 
     let out = unsafe { std::slice::from_raw_parts_mut(cells, needed) };
-    let (default_fg, default_bg) = built.default_colors;
+    // `default_colors()` returns (background, foreground), in that order.
+    let (default_bg, default_fg) = built.default_colors;
 
     for (row_index, row) in rows.iter().enumerate() {
         for (col_index, cell) in row.iter().enumerate() {
