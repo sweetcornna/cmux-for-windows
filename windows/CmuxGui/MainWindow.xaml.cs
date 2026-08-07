@@ -29,7 +29,25 @@ public sealed partial class MainWindow : Window
         AppSettings.Changed += Relocalize;
 
         Tabs.SelectionChanged += OnTabSelectionChanged;
+
+        // XAML focus is not window focus. Taking focus at load succeeds while
+        // the window is still inactive, and NavigationView then focuses its own
+        // search box, so the first keystrokes went nowhere until a click.
+        Activated += OnWindowActivated;
+
         AddTerminalTab();
+    }
+
+    private void OnWindowActivated(object sender, WindowActivatedEventArgs e)
+    {
+        if (e.WindowActivationState == WindowActivationState.Deactivated)
+        {
+            return;
+        }
+        if (Tabs.SelectedItem is TabViewItem { Content: TerminalView view })
+        {
+            view.FocusTerminal();
+        }
     }
 
     /// <summary>Re-read chrome strings, so a language change shows up at once.</summary>

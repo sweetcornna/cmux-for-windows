@@ -47,6 +47,9 @@ public sealed partial class TerminalView : UserControl, IDisposable
     private int _cellCount;
 
     private CanvasTextFormat _format = null!;
+    // Bold and italic need their own formats; a single one renders every
+    // attribute as regular text, which flattens any TUI that uses emphasis.
+    private readonly CanvasTextFormat[] _formats = new CanvasTextFormat[4];
     private string _status = string.Empty;
     // Used until the first snapshot arrives, so the very first paint already
     // shows the Ghostty background instead of flashing a default.
@@ -54,6 +57,10 @@ public sealed partial class TerminalView : UserControl, IDisposable
     private uint _themeForeground = CmuxNative.NoColor;
     private float _cellWidth = 8;
     private float _cellHeight = 16;
+    // The starting cell size above is a placeholder. Sizing the PTY from it
+    // would start the shell on a grid the font does not actually produce, and
+    // text it has already emitted keeps that wrong wrapping forever.
+    private bool _metricsReady;
     private ushort _cols;
     private ushort _rows;
 
@@ -134,10 +141,27 @@ public sealed partial class TerminalView : UserControl, IDisposable
             WordWrapping = CanvasWordWrapping.NoWrap,
         };
 
+        for (var i = 0; i < 4; i++)
+        {
+            _formats[i] = new CanvasTextFormat
+            {
+                FontFamily = _format.FontFamily,
+                FontSize = _format.FontSize,
+                WordWrapping = CanvasWordWrapping.NoWrap,
+                FontWeight = (i & 1) != 0
+                    ? Microsoft.UI.Text.FontWeights.Bold
+                    : Microsoft.UI.Text.FontWeights.Normal,
+                FontStyle = (i & 2) != 0
+                    ? Windows.UI.Text.FontStyle.Italic
+                    : Windows.UI.Text.FontStyle.Normal,
+            };
+        }
+
         // Measure rather than assume: the resolved face decides the cell box.
         using var layout = new CanvasTextLayout(sender, "MMMMMMMMMM", _format, 0, 0);
         _cellWidth = (float)layout.LayoutBounds.Width / 10f;
         _cellHeight = (float)layout.LayoutBounds.Height;
+        _metricsReady = true;
         SyncGrid();
     }
 
@@ -152,11 +176,28 @@ public sealed partial class TerminalView : UserControl, IDisposable
         DispatcherQueue.TryEnqueue(() => TakeFocus("queued", FocusState.Programmatic));
     }
 
+    /// <summary>Give the grid keyboard focus. Called when the window activates.</summary>
+    public void FocusTerminal() => TakeFocus("window-activated", FocusState.Programmatic);
+
     private void TakeFocus(string reason, FocusState state)
     {
-        var ok = Focus(state);
-        var holder = FocusManager.GetFocusedElement(XamlRoot)?.GetType().Name ?? "none";
-        Diag.Log($"focus({reason}) granted={ok} holder={holder}");
+        // Window activation can fire before this control is in the visual tree,
+        // and FocusManager.GetFocusedElement(null) throws. An exception here
+        // surfaces as a stowed exception that kills the app at startup.
+        if (XamlRoot is null)
+        {
+            return;
+        }
+        try
+        {
+            var ok = Focus(state);
+            var holder = FocusManager.GetFocusedElement(XamlRoot)?.GetType().Name ?? "none";
+            Diag.Log($"focus({reason}) granted={ok} holder={holder}");
+        }
+        catch (Exception ex)
+        {
+            Diag.Log($"focus({reason}) failed: {ex.Message}");
+        }
     }
 
 
@@ -164,19 +205,30 @@ public sealed partial class TerminalView : UserControl, IDisposable
     /// <summary>Match the PTY grid to the control size, creating the session on first use.</summary>
     private void SyncGrid()
     {
-        if (_cellWidth <= 0 || _cellHeight <= 0 || ActualWidth <= 0 || ActualHeight <= 0)
+        // Wait for the measured cell box. Sizing the PTY from the placeholder
+        // starts the shell on a grid that never matches what gets drawn.
+        if (!_metricsReady)
         {
-            Diag.Log($"SyncGrid skipped cell={_cellWidth}x{_cellHeight} size={ActualWidth}x{ActualHeight}");
             return;
         }
 
-        var cols = (ushort)Math.Max(1, (int)(ActualWidth / _cellWidth));
-        var rows = (ushort)Math.Max(1, (int)(ActualHeight / _cellHeight));
+        // The canvas, not this control: cells are drawn in canvas coordinates,
+        // and the card border and margin sit between the two.
+        var width = _canvas.ActualWidth;
+        var height = _canvas.ActualHeight;
+        if (_cellWidth <= 0 || _cellHeight <= 0 || width <= 0 || height <= 0)
+        {
+            return;
+        }
+
+        var cols = (ushort)Math.Max(1, (int)(width / _cellWidth));
+        var rows = (ushort)Math.Max(1, (int)(height / _cellHeight));
         if (cols == _cols && rows == _rows && _session != IntPtr.Zero)
         {
             return;
         }
 
+        Diag.Log($"SyncGrid {cols}x{rows} canvas={width:F0}x{height:F0} cell={_cellWidth:F2}x{_cellHeight:F2}");
         _cols = cols;
         _rows = rows;
 
@@ -354,7 +406,7 @@ public sealed partial class TerminalView : UserControl, IDisposable
                 {
                     break;
                 }
-                var bg = _cells[index].Bg;
+                var bg = EffectiveBg(_cells[index]);
                 if (bg == CmuxNative.NoColor)
                 {
                     col++;
@@ -363,7 +415,7 @@ public sealed partial class TerminalView : UserControl, IDisposable
                 var span = 1;
                 while (col + span < _frame.Cols
                        && row * _frame.Cols + col + span < _cellCount
-                       && _cells[row * _frame.Cols + col + span].Bg == bg)
+                       && EffectiveBg(_cells[row * _frame.Cols + col + span]) == bg)
                 {
                     span++;
                 }
@@ -384,13 +436,14 @@ public sealed partial class TerminalView : UserControl, IDisposable
                     break;
                 }
                 var cell = _cells[index];
-                if (cell.Ch == 0 || cell.Width == 0)
+                if (cell.Ch == 0 || cell.Width == 0 || Has(cell.Attrs, AttrInvisible))
                 {
                     col++;
                     continue;
                 }
 
                 var fg = cell.Fg;
+                var style = StyleOf(cell.Attrs);
                 var start = col;
                 run.Clear();
                 while (col < _frame.Cols)
@@ -406,7 +459,10 @@ public sealed partial class TerminalView : UserControl, IDisposable
                         col++;
                         continue;
                     }
-                    if (c.Ch == 0 || c.Fg != fg)
+                    // A run must share colour *and* style, or bold and dim text
+                    // would inherit whatever the run happened to start with.
+                    if (c.Ch == 0 || c.Fg != fg || StyleOf(c.Attrs) != style
+                        || Has(c.Attrs, AttrInvisible))
                     {
                         break;
                     }
@@ -416,12 +472,15 @@ public sealed partial class TerminalView : UserControl, IDisposable
 
                 if (run.Length > 0)
                 {
-                    ds.DrawText(
-                        run.ToString(),
-                        start * _cellWidth,
-                        y,
-                        fg == CmuxNative.NoColor ? defaultFg : FromPacked(fg, defaultFg),
-                        _format);
+                    var colour = Has(style, AttrInverse)
+                        ? FromPacked(_frame.DefaultBg, Colors.Black)
+                        : (fg == CmuxNative.NoColor ? defaultFg : FromPacked(fg, defaultFg));
+                    if (Has(style, AttrFaint))
+                    {
+                        colour = Dim(colour);
+                    }
+                    ds.DrawText(run.ToString(), start * _cellWidth, y, colour,
+                                _formats[StyleIndex(style)]);
                 }
             }
         }
@@ -454,6 +513,36 @@ public sealed partial class TerminalView : UserControl, IDisposable
     // SSH passphrases, and pasted secrets, so logging input would write them
     // to disk in plaintext. Diagnose focus and routing instead, which is what
     // actually goes wrong.
+
+    private const ushort AttrBold = 0x0001;
+    private const ushort AttrItalic = 0x0002;
+    private const ushort AttrInverse = 0x0008;
+    private const ushort AttrFaint = 0x0010;
+    private const ushort AttrInvisible = 0x0020;
+
+    private static bool Has(ushort attrs, ushort bit) => (attrs & bit) != 0;
+
+    /// <summary>Only the bits that change how a run is painted.</summary>
+    private static ushort StyleOf(ushort attrs) =>
+        (ushort)(attrs & (AttrBold | AttrItalic | AttrInverse | AttrFaint));
+
+    private static int StyleIndex(ushort style) =>
+        (Has(style, AttrBold) ? 1 : 0) | (Has(style, AttrItalic) ? 2 : 0);
+
+    /// <summary>Faint text is the same colour carried toward the background.</summary>
+    private static Color Dim(Color c) =>
+        Color.FromArgb(c.A, (byte)(c.R * 0.55), (byte)(c.G * 0.55), (byte)(c.B * 0.55));
+
+    /// <summary>Cell background, with inverse swapping the foreground in.</summary>
+    private uint EffectiveBg(in CmuxNative.Cell cell)
+    {
+        if (Has(cell.Attrs, AttrInverse))
+        {
+            return cell.Fg == CmuxNative.NoColor ? _frame.DefaultFg : cell.Fg;
+        }
+        return cell.Bg;
+    }
+
     private void OnCharacterReceived(UIElement sender, CharacterReceivedRoutedEventArgs args)
     {
         // Printable input, including anything produced by an IME.
