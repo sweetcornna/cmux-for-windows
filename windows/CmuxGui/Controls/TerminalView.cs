@@ -374,9 +374,12 @@ public sealed partial class TerminalView : UserControl, IDisposable
         }
     }
 
+    // Never log key or character content here. A terminal carries passwords,
+    // SSH passphrases, and pasted secrets, so logging input would write them
+    // to disk in plaintext. Diagnose focus and routing instead, which is what
+    // actually goes wrong.
     private void OnCharacterReceived(UIElement sender, CharacterReceivedRoutedEventArgs args)
     {
-        Diag.Log($"char '{args.Character}' session={(_session == IntPtr.Zero ? "null" : "ok")}");
         // Printable input, including anything produced by an IME.
         Send(Encoding.UTF8.GetBytes(args.Character.ToString()));
         args.Handled = true;
@@ -384,7 +387,6 @@ public sealed partial class TerminalView : UserControl, IDisposable
 
     private void OnKeyDown(object sender, KeyRoutedEventArgs e)
     {
-        Diag.Log($"keydown {e.Key}");
         // Keys that never arrive as characters.
         byte[]? bytes = e.Key switch
         {
