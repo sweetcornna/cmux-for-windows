@@ -59,7 +59,20 @@ public sealed partial class TerminalView : UserControl, IDisposable
     {
         _root.Children.Add(_backgroundImage);
         _root.Children.Add(_canvas);
-        Content = _root;
+        // A rounded, clipped surface is what makes terminal content read as a
+        // Windows 11 card instead of a raw rectangle butted against the chrome.
+        // Border clips its child to the corner radius; Grid cannot.
+        // TabView.Padding does not reach the content presenter, so the inset
+        // has to live on the card itself. The hairline stroke is what makes the
+        // corner radius legible against a dark terminal.
+        Content = new Border
+        {
+            Child = _root,
+            CornerRadius = new CornerRadius(8),
+            Margin = new Thickness(2, 0, 8, 8),
+            BorderThickness = new Thickness(1),
+            BorderBrush = Application.Current.Resources["CardStrokeColorDefaultBrush"] as Brush,
+        };
         IsTabStop = true;
         UseSystemFocusVisuals = true;
 

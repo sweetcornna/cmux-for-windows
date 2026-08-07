@@ -49,8 +49,12 @@ public sealed class AppSettings
     /// <summary>Element tint overrides, hex "#RRGGBB"; empty means use the theme.</summary>
     public string AccentColor { get; set; } = string.Empty;
 
-    /// <summary>Element theme override: empty (system), "Light", or "Dark".</summary>
-    public string AppTheme { get; set; } = string.Empty;
+    /// <summary>Element theme: empty (system), "Light", or "Dark".</summary>
+    ///
+    /// Defaults to Dark rather than following the system. A terminal is a dark
+    /// surface, and a light Fluent shell wrapped around a black rectangle reads
+    /// as two unrelated things bolted together. cmux itself is a dark app.
+    public string AppTheme { get; set; } = "Dark";
 
     [JsonIgnore]
     public static string Path { get; } = System.IO.Path.Combine(

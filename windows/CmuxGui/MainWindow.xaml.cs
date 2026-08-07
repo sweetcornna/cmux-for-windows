@@ -10,6 +10,8 @@ namespace CmuxGui;
 public sealed partial class MainWindow : Window
 {
     private int _tabCounter;
+    /// <summary>Guards the two-way sync between nav selection and tab selection.</summary>
+    private bool _syncing;
 
     public MainWindow()
     {
@@ -26,6 +28,7 @@ public sealed partial class MainWindow : Window
         AppSettings.Changed += ApplyAppearance;
         AppSettings.Changed += Relocalize;
 
+        Tabs.SelectionChanged += OnTabSelectionChanged;
         AddTerminalTab();
     }
 
@@ -64,10 +67,11 @@ public sealed partial class MainWindow : Window
     private void AddTerminalTab()
     {
         _tabCounter++;
+        var title = $"PowerShell {_tabCounter}";
         var view = new TerminalView();
         var tab = new TabViewItem
         {
-            Header = $"PowerShell {_tabCounter}",
+            Header = title,
             IconSource = new SymbolIconSource { Symbol = Symbol.Document },
             Content = view,
             // TabViewItem aligns content to the top by default, which hands the
@@ -77,7 +81,57 @@ public sealed partial class MainWindow : Window
             HorizontalContentAlignment = HorizontalAlignment.Stretch,
         };
         Tabs.TabItems.Add(tab);
+
+        // Mirror the tab into the sidebar. cmux's pane is a session list, so an
+        // empty rail reads as unfinished rather than minimal.
+        Nav.MenuItems.Add(BuildSessionItem(title, tab));
+
         Tabs.SelectedItem = tab;
+    }
+
+    /// <summary>A sidebar row: title over its working directory, like cmux.</summary>
+    private static NavigationViewItem BuildSessionItem(string title, TabViewItem tab)
+    {
+        var text = new StackPanel();
+        text.Children.Add(new TextBlock { Text = title });
+        text.Children.Add(new TextBlock
+        {
+            Text = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile),
+            Style = Application.Current.Resources["CaptionTextBlockStyle"] as Style,
+            Foreground = Application.Current.Resources["TextFillColorSecondaryBrush"] as Brush,
+            TextTrimming = TextTrimming.CharacterEllipsis,
+        });
+
+        return new NavigationViewItem
+        {
+            Content = text,
+            Icon = new SymbolIcon(Symbol.Document),
+            Tag = tab,
+        };
+    }
+
+    private void OnTabSelectionChanged(object sender, SelectionChangedEventArgs e)
+    {
+        if (_syncing || Tabs.SelectedItem is not TabViewItem tab)
+        {
+            return;
+        }
+        _syncing = true;
+        try
+        {
+            foreach (var item in Nav.MenuItems)
+            {
+                if (item is NavigationViewItem nav && ReferenceEquals(nav.Tag, tab))
+                {
+                    Nav.SelectedItem = nav;
+                    break;
+                }
+            }
+        }
+        finally
+        {
+            _syncing = false;
+        }
     }
 
     private void OnAddTab(TabView sender, object args) => AddTerminalTab();
@@ -89,6 +143,15 @@ public sealed partial class MainWindow : Window
             disposable.Dispose();
         }
         sender.TabItems.Remove(args.Tab);
+
+        foreach (var item in Nav.MenuItems)
+        {
+            if (item is NavigationViewItem nav && ReferenceEquals(nav.Tag, args.Tab))
+            {
+                Nav.MenuItems.Remove(nav);
+                break;
+            }
+        }
 
         // Closing the last tab closes the window, matching terminal convention.
         if (sender.TabItems.Count == 0)
@@ -106,11 +169,24 @@ public sealed partial class MainWindow : Window
             SettingsFrame.Navigate(typeof(Views.SettingsPage));
             SettingsFrame.Visibility = Visibility.Visible;
             Tabs.Visibility = Visibility.Collapsed;
+            return;
         }
-        else
+
+        SettingsFrame.Visibility = Visibility.Collapsed;
+        Tabs.Visibility = Visibility.Visible;
+
+        if (_syncing || args.SelectedItem is not NavigationViewItem { Tag: TabViewItem tab })
         {
-            SettingsFrame.Visibility = Visibility.Collapsed;
-            Tabs.Visibility = Visibility.Visible;
+            return;
+        }
+        _syncing = true;
+        try
+        {
+            Tabs.SelectedItem = tab;
+        }
+        finally
+        {
+            _syncing = false;
         }
     }
 }
