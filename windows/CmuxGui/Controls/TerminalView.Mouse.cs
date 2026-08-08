@@ -100,6 +100,17 @@ public sealed partial class TerminalView
             _selectionFocus = null;
             _canvas.Invalidate();
         }
+
+        // Releasing the button hands focus to an ancestor ScrollViewer, which
+        // is not cancelable, so the only way to keep it is to take it back
+        // afterwards. Without this a click leaves the terminal with no focus at
+        // all and every following keystroke is discarded -- and clicking the
+        // terminal is the first thing anyone does before typing.
+        TakeFocus("pointer-up", FocusState.Pointer);
+        // The transfer can also land after this handler returns, so assert once
+        // more when the focus change has settled. Scoped to a press that began
+        // on the terminal, so it never fights a click on the sidebar.
+        DispatcherQueue.TryEnqueue(() => TakeFocus("pointer-settled", FocusState.Pointer));
     }
 
     private void OnPointerWheel(object sender, PointerRoutedEventArgs e)

@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.Text;
 using CmuxGui.Interop;
 using CmuxGui.Services;
@@ -63,6 +64,9 @@ public sealed partial class TerminalView : UserControl, IDisposable
     private bool _metricsReady;
     private ushort _cols;
     private ushort _rows;
+    /// <summary>Input typed before the session existed. See <see cref="Send"/>.</summary>
+    private readonly List<byte> _pending = new();
+    private int _inputTrace;
 
     public TerminalView()
     {
@@ -88,6 +92,16 @@ public sealed partial class TerminalView : UserControl, IDisposable
         // system visual draws a bright frame around the whole grid the moment
         // focus is taken programmatically at startup.
         UseSystemFocusVisuals = false;
+
+        // The canvas is a rendering surface, not a control. CanvasControl
+        // derives from Control, so by default a click lands on it and it takes
+        // focus away from this view -- about 80ms after the press, when the
+        // button comes back up. The terminal then held no focus and every
+        // keystroke went nowhere, which looked like a dead window.
+        _canvas.IsTabStop = false;
+        _canvas.AllowFocusOnInteraction = false;
+        _backgroundImage.AllowFocusOnInteraction = false;
+        _mask.AllowFocusOnInteraction = false;
 
         // Transparent clear lets the terminal background carry an alpha and
         // composite over the image and the window backdrop beneath it.
@@ -120,6 +134,20 @@ public sealed partial class TerminalView : UserControl, IDisposable
         // owning tab disposes this explicitly when it is closed.
         KeyDown += OnKeyDown;
         CharacterReceived += OnCharacterReceived;
+        // Focus moving away silently is one of the few remaining explanations
+        // for keystrokes that never arrive, so make it visible. LosingFocus
+        // names the element taking over, which LostFocus cannot.
+        GotFocus += (_, _) => Diag.Log("terminal got focus");
+        LosingFocus += (_, e) => Diag.Log(
+            $"terminal losing focus to {e.NewFocusedElement?.GetType().FullName ?? "nothing"} "
+            + $"(state={e.FocusState}, direction={e.Direction}, cancelable={e.Cancel})");
+        LostFocus += (_, _) =>
+        {
+            var holder = XamlRoot is null
+                ? "no-xaml-root"
+                : FocusManager.GetFocusedElement(XamlRoot)?.GetType().FullName ?? "nothing";
+            Diag.Log($"terminal lost focus; now held by {holder}");
+        };
     }
 
     private void OnCreateResources(CanvasControl sender, Microsoft.Graphics.Canvas.UI.CanvasCreateResourcesEventArgs args)
@@ -256,6 +284,7 @@ public sealed partial class TerminalView : UserControl, IDisposable
                 if (_session != IntPtr.Zero)
                 {
                     ApplySettings();
+                    FlushPendingInput();
                 }
             }
             catch (Exception ex)
@@ -548,6 +577,7 @@ public sealed partial class TerminalView : UserControl, IDisposable
 
     private void OnCharacterReceived(UIElement sender, CharacterReceivedRoutedEventArgs args)
     {
+        TraceInput("char");
         // Printable input, including anything produced by an IME.
         Send(Encoding.UTF8.GetBytes(args.Character.ToString()));
         args.Handled = true;
@@ -555,6 +585,7 @@ public sealed partial class TerminalView : UserControl, IDisposable
 
     private void OnKeyDown(object sender, KeyRoutedEventArgs e)
     {
+        TraceInput("key");
         // Keys that never arrive as characters.
         byte[]? bytes = e.Key switch
         {
@@ -583,11 +614,61 @@ public sealed partial class TerminalView : UserControl, IDisposable
 
     private void Send(byte[] bytes)
     {
-        if (_session != IntPtr.Zero && bytes.Length > 0)
+        if (bytes.Length == 0)
         {
-            CmuxNative.SessionWrite(_session, bytes, (nuint)bytes.Length);
+            return;
         }
+        if (_session == IntPtr.Zero)
+        {
+            // The window is visible for a moment before the session exists, and
+            // anything typed in that gap used to vanish. Hold it instead, and
+            // let the shell receive it once there is somewhere to put it.
+            _pending.AddRange(bytes);
+            TraceInput("queued");
+            return;
+        }
+        CmuxNative.SessionWrite(_session, bytes, (nuint)bytes.Length);
     }
+
+    /// <summary>Deliver anything typed before the session existed.</summary>
+    private void FlushPendingInput()
+    {
+        if (_pending.Count == 0 || _session == IntPtr.Zero)
+        {
+            return;
+        }
+        var bytes = _pending.ToArray();
+        _pending.Clear();
+        Diag.Log($"flushing {bytes.Length} byte(s) typed before the session was ready");
+        CmuxNative.SessionWrite(_session, bytes, (nuint)bytes.Length);
+    }
+
+    /// <summary>
+    /// Record that input arrived, never what it was.
+    ///
+    /// Bounded to the opening moments: an unbounded version would be a
+    /// per-keystroke disk write, and one that included the key or character
+    /// would be a keylogger. Neither is acceptable; do not add either back.
+    /// </summary>
+    private void TraceInput(string what)
+    {
+        if (_inputTrace >= 30)
+        {
+            return;
+        }
+        _inputTrace++;
+        var holder = XamlRoot is null
+            ? "no-xaml-root"
+            : FocusManager.GetFocusedElement(XamlRoot)?.GetType().Name ?? "none";
+        // The keyboard layout says whether an IME is in play. Injected input and
+        // physical keypresses take different routes through TSF, which is why
+        // synthetic tests cannot stand in for a real keyboard here.
+        var layout = (uint)GetKeyboardLayout(0) & 0xFFFF;
+        Diag.Log($"input {what} sessionReady={_session != IntPtr.Zero} focus={holder} hkl=0x{layout:X4}");
+    }
+
+    [System.Runtime.InteropServices.DllImport("user32.dll")]
+    private static extern IntPtr GetKeyboardLayout(uint threadId);
 
     private static Color FromPacked(uint packed, Color fallback)
     {
