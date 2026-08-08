@@ -1,0 +1,190 @@
+<?xml version="1.0" encoding="utf-8"?>
+<root>
+  <resheader name="resmimetype"><value>text/microsoft-resx</value></resheader>
+  <resheader name="version"><value>2.0</value></resheader>
+  <resheader name="reader"><value>System.Resources.ResXResourceReader, System.Windows.Forms, Version=4.0.0.0, Culture=neutral, PublicKeyToken=b77a5c561934e089</value></resheader>
+  <resheader name="writer"><value>System.Resources.ResXResourceWriter, System.Windows.Forms, Version=4.0.0.0, Culture=neutral, PublicKeyToken=b77a5c561934e089</value></resheader>
+  <data name="Nav_Search" xml:space="preserve">
+    <value>搜索会话</value>
+  </data>
+  <data name="Nav_Workspaces" xml:space="preserve">
+    <value>工作区</value>
+  </data>
+  <data name="Settings_Title" xml:space="preserve">
+    <value>设置</value>
+  </data>
+  <data name="Settings_Appearance" xml:space="preserve">
+    <value>外观</value>
+  </data>
+  <data name="Settings_Theme" xml:space="preserve">
+    <value>终端主题</value>
+  </data>
+  <data name="Settings_ThemeDesc" xml:space="preserve">
+    <value>配色方案与调色板</value>
+  </data>
+  <data name="Settings_FollowConfig" xml:space="preserve">
+    <value>跟随 Ghostty 配置</value>
+  </data>
+  <data name="Settings_AppTheme" xml:space="preserve">
+    <value>应用主题</value>
+  </data>
+  <data name="Settings_AppThemeDesc" xml:space="preserve">
+    <value>默认跟随系统主题</value>
+  </data>
+  <data name="Settings_Backdrop" xml:space="preserve">
+    <value>窗口材质</value>
+  </data>
+  <data name="Settings_BackdropDesc" xml:space="preserve">
+    <value>窗口内容背后的绘制方式</value>
+  </data>
+  <data name="Settings_Blur" xml:space="preserve">
+    <value>模糊程度</value>
+  </data>
+  <data name="Settings_Opacity" xml:space="preserve">
+    <value>终端不透明度</value>
+  </data>
+  <data name="Settings_Background" xml:space="preserve">
+    <value>背景图片</value>
+  </data>
+  <data name="Settings_BackgroundDesc" xml:space="preserve">
+    <value>显示在终端网格后面</value>
+  </data>
+  <data name="Settings_ImageOpacity" xml:space="preserve">
+    <value>图片不透明度</value>
+  </data>
+  <data name="Settings_Choose" xml:space="preserve">
+    <value>选择…</value>
+  </data>
+  <data name="Settings_Clear" xml:space="preserve">
+    <value>清除</value>
+  </data>
+  <data name="Settings_Terminal" xml:space="preserve">
+    <value>终端</value>
+  </data>
+  <data name="Settings_Font" xml:space="preserve">
+    <value>字体</value>
+  </data>
+  <data name="Settings_FontDesc" xml:space="preserve">
+    <value>取自你的 Ghostty 配置</value>
+  </data>
+  <data name="Settings_Language" xml:space="preserve">
+    <value>语言</value>
+  </data>
+  <data name="Settings_LanguageDesc" xml:space="preserve">
+    <value>重启 cmux 后生效</value>
+  </data>
+  <data name="Settings_Integration" xml:space="preserve">
+    <value>Windows 集成</value>
+  </data>
+  <data name="Settings_ContextMenu" xml:space="preserve">
+    <value>资源管理器右键菜单</value>
+  </data>
+  <data name="Settings_ContextMenuDesc" xml:space="preserve">
+    <value>为文件夹添加“用 cmux 打开”菜单项</value>
+  </data>
+  <data name="Settings_About" xml:space="preserve">
+    <value>关于</value>
+  </data>
+  <data name="Settings_AboutDesc" xml:space="preserve">
+    <value>终端通过 Ghostty VT 引擎运行在 ConPTY 上，与 cmux TUI 使用同一个引擎。</value>
+  </data>
+  <data name="Option_System" xml:space="preserve">
+    <value>跟随系统</value>
+  </data>
+  <data name="Option_Light" xml:space="preserve">
+    <value>浅色</value>
+  </data>
+  <data name="Option_Dark" xml:space="preserve">
+    <value>深色</value>
+  </data>
+  <data name="Option_Mica" xml:space="preserve">
+    <value>Mica</value>
+  </data>
+  <data name="Option_Acrylic" xml:space="preserve">
+    <value>亚克力</value>
+  </data>
+  <data name="Option_None" xml:space="preserve">
+    <value>无</value>
+  </data>
+  <data name="ContextMenu_OpenWindow" xml:space="preserve">
+    <value>用 cmux 打开</value>
+  </data>
+  <data name="ContextMenu_OpenWorkspace" xml:space="preserve">
+    <value>作为 cmux 工作区打开</value>
+  </data>
+  <data name="Settings_ContextMenuFailed" xml:space="preserve">
+    <value>无法更新右键菜单，详见日志。</value>
+  </data>
+  <data name="Settings_TermBg" xml:space="preserve">
+    <value>终端背景色</value>
+  </data>
+  <data name="Settings_TermFg" xml:space="preserve">
+    <value>终端文字颜色</value>
+  </data>
+  <data name="Settings_TermMask" xml:space="preserve">
+    <value>图片蒙版</value>
+  </data>
+  <data name="Settings_MaskOpacity" xml:space="preserve">
+    <value>蒙版浓度</value>
+  </data>
+  <data name="Settings_AppBg" xml:space="preserve">
+    <value>窗口颜色</value>
+  </data>
+  <data name="Settings_AppBackground" xml:space="preserve">
+    <value>窗口背景</value>
+  </data>
+  <data name="Settings_AppBackgroundDesc" xml:space="preserve">
+    <value>显示在整个应用后面</value>
+  </data>
+  <data name="Settings_AppMask" xml:space="preserve">
+    <value>窗口蒙版</value>
+  </data>
+  <data name="Settings_ImageOpacityShort" xml:space="preserve">
+    <value>图片不透明度</value>
+  </data>
+  <data name="Menu_Copy" xml:space="preserve">
+    <value>复制</value>
+  </data>
+  <data name="Menu_Paste" xml:space="preserve">
+    <value>粘贴</value>
+  </data>
+  <data name="Menu_SelectAll" xml:space="preserve">
+    <value>全选</value>
+  </data>
+  <data name="Workspace_New" xml:space="preserve">
+    <value>新建工作区</value>
+  </data>
+  <data name="Workspace_Close" xml:space="preserve">
+    <value>关闭工作区</value>
+  </data>
+  <data name="Pane_NewTerminal" xml:space="preserve">
+    <value>新建终端</value>
+  </data>
+  <data name="Pane_SplitRight" xml:space="preserve">
+    <value>向右分屏</value>
+  </data>
+  <data name="Pane_SplitDown" xml:space="preserve">
+    <value>向下分屏</value>
+  </data>
+  <data name="Pane_Close" xml:space="preserve">
+    <value>关闭窗格</value>
+  </data>
+  <data name="Pane_EmptyWorkspace" xml:space="preserve">
+    <value>此工作区中没有终端。</value>
+  </data>
+  <data name="Pane_Empty" xml:space="preserve">
+    <value>空窗格</value>
+  </data>
+  <data name="Pane_Terminal" xml:space="preserve">
+    <value>终端</value>
+  </data>
+  <data name="Pane_Browser" xml:space="preserve">
+    <value>浏览器</value>
+  </data>
+  <data name="Pane_Pane" xml:space="preserve">
+    <value>窗格</value>
+  </data>
+  <data name="Pane_BrowserUnavailable" xml:space="preserve">
+    <value>Windows 前端暂不支持浏览器窗格。</value>
+  </data>
+</root>

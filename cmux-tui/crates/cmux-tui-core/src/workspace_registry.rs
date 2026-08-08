@@ -925,6 +925,58 @@ impl WorkspaceRegistry {
         terminal: &RegistryTerminal,
         result: &Value,
     ) -> anyhow::Result<TerminalRegistryCommit> {
+        self.commit_terminal_with_policy(
+            mutation,
+            fingerprint,
+            expected_generation,
+            expected_revision,
+            event_kind,
+            terminal,
+            result,
+            false,
+        )
+    }
+
+    /// Starts a new process incarnation for an exited durable terminal.
+    ///
+    /// This is intentionally crate-private: ordinary terminal commits cannot
+    /// reuse exited ids. Native frontends use it only when restoring the same
+    /// logical terminal in the same workspace with a fresh local shell.
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn commit_terminal_relaunch(
+        &mut self,
+        mutation: &WorkspaceMutation,
+        fingerprint: &Value,
+        expected_generation: Option<&str>,
+        expected_revision: Option<u64>,
+        event_kind: &str,
+        terminal: &RegistryTerminal,
+        result: &Value,
+    ) -> anyhow::Result<TerminalRegistryCommit> {
+        self.commit_terminal_with_policy(
+            mutation,
+            fingerprint,
+            expected_generation,
+            expected_revision,
+            event_kind,
+            terminal,
+            result,
+            true,
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn commit_terminal_with_policy(
+        &mut self,
+        mutation: &WorkspaceMutation,
+        fingerprint: &Value,
+        expected_generation: Option<&str>,
+        expected_revision: Option<u64>,
+        event_kind: &str,
+        terminal: &RegistryTerminal,
+        result: &Value,
+        allow_relaunch: bool,
+    ) -> anyhow::Result<TerminalRegistryCommit> {
         validate_identifier("mutation id", &mutation.id)?;
         validate_identifier("mutation origin", &mutation.origin)?;
         validate_identifier("terminal event kind", event_kind)?;
@@ -976,7 +1028,11 @@ impl WorkspaceRegistry {
                 replayed: true,
             });
         }
-        validate_terminal_transition(existing.as_ref(), terminal)?;
+        if allow_relaunch {
+            validate_terminal_relaunch(existing.as_ref(), terminal)?;
+        } else {
+            validate_terminal_transition(existing.as_ref(), terminal)?;
+        }
         if terminal.lifecycle != TerminalLifecycle::Tombstoned
             && existing.as_ref().is_none_or(|stored| stored.workspace_key != terminal.workspace_key)
         {
@@ -2531,6 +2587,28 @@ fn validate_terminal_transition(
     {
         anyhow::bail!("terminal launch spec cannot change during a live incarnation");
     }
+    Ok(())
+}
+
+fn validate_terminal_relaunch(
+    existing: Option<&RegistryTerminal>,
+    desired: &RegistryTerminal,
+) -> anyhow::Result<()> {
+    let Some(existing) = existing else {
+        anyhow::bail!("terminal relaunch requires an existing terminal");
+    };
+    anyhow::ensure!(
+        existing.lifecycle == TerminalLifecycle::Exited,
+        "terminal relaunch requires an exited terminal"
+    );
+    anyhow::ensure!(
+        desired.lifecycle == TerminalLifecycle::Launching,
+        "terminal relaunch must reserve the next incarnation"
+    );
+    anyhow::ensure!(
+        existing.workspace_key == desired.workspace_key,
+        "terminal relaunch cannot change workspace"
+    );
     Ok(())
 }
 
