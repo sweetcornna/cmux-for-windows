@@ -82,6 +82,38 @@ export BINDGEN_EXTRA_CLANG_ARGS="--target=x86_64-w64-mingw32 \
 
 Symptom when this is wrong: `fatal error: 'stddef.h' file not found`.
 
+## Native GUI installer
+
+The public GUI is distributed as a self-contained, per-user Setup executable.
+Build the Release `cmux_ffi.dll` first, install Inno Setup, and run the installer
+script from the repository root:
+
+```powershell
+winget install --exact --id JRSoftware.InnoSetup
+.\windows\scripts\installer.ps1
+```
+
+The script reads the version from `windows\CmuxGui\Package.appxmanifest`,
+publishes the unpackaged WinUI app with matching assembly/file versions, copies
+the Release GNU engine next to `CmuxGui.exe`, and writes these artifacts under
+`windows\dist`:
+
+```text
+cmux-windows-v<version>-setup.exe
+cmux-windows-v<version>-setup.exe.sha256
+```
+
+Setup installs without elevation under `%LOCALAPPDATA%\Programs\cmux`, creates a
+Start menu shortcut, offers an optional desktop shortcut, and registers a normal
+per-user uninstall entry. Existing Explorer context-menu verbs remain opt-in; an
+upgrade repairs their executable path only if the user had already enabled them,
+and uninstall removes them through the app's own `ShellIntegration` path. User
+settings and durable workspace state are deliberately preserved on uninstall.
+
+The installer is unsigned until a public code-signing identity is available, so
+Windows can display an unknown-publisher warning even when its published SHA-256
+matches.
+
 ## Run
 
 ```bash

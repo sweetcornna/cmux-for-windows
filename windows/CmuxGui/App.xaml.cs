@@ -9,6 +9,9 @@ namespace CmuxGui;
 public partial class App : Application
 {
     private Window? _window;
+    private static bool _registerShell;
+    private static bool _repairShell;
+    private static bool _unregisterShell;
 
     /// <summary>
     /// HWND of the main window.
@@ -46,14 +49,29 @@ public partial class App : Application
     }
 
     /// <summary>
-    /// Read the verbs Explorer invokes: <c>--new-window PATH</c> and
-    /// <c>--new-workspace PATH</c>.
+    /// Read the verbs Explorer and the uninstaller invoke.
     /// </summary>
     private static void ParseCommandLine()
     {
         var args = Environment.GetCommandLineArgs();
         for (var i = 1; i < args.Length; i++)
         {
+            if (string.Equals(args[i], "--register-shell", StringComparison.OrdinalIgnoreCase))
+            {
+                _registerShell = true;
+                return;
+            }
+            if (string.Equals(args[i], "--repair-shell", StringComparison.OrdinalIgnoreCase))
+            {
+                _repairShell = true;
+                return;
+            }
+            if (string.Equals(args[i], "--unregister-shell", StringComparison.OrdinalIgnoreCase))
+            {
+                _unregisterShell = true;
+                return;
+            }
+
             var isWindow = string.Equals(args[i], "--new-window", StringComparison.OrdinalIgnoreCase);
             var isWorkspace = string.Equals(args[i], "--new-workspace", StringComparison.OrdinalIgnoreCase);
             if ((isWindow || isWorkspace) && i + 1 < args.Length)
@@ -68,6 +86,23 @@ public partial class App : Application
 
     protected override void OnLaunched(LaunchActivatedEventArgs args)
     {
+        if (_registerShell || _repairShell)
+        {
+            var ok = (_repairShell && !ShellIntegration.IsRegistered)
+                || ShellIntegration.Register(
+                    Loc.S("ContextMenu_OpenWindow"),
+                    Loc.S("ContextMenu_OpenWorkspace"));
+            Environment.ExitCode = ok ? 0 : 1;
+            Exit();
+            return;
+        }
+        if (_unregisterShell)
+        {
+            Environment.ExitCode = ShellIntegration.Unregister() ? 0 : 1;
+            Exit();
+            return;
+        }
+
         var window = new MainWindow();
         _window = window;
         MainWindowHandle = WinRT.Interop.WindowNative.GetWindowHandle(window);
