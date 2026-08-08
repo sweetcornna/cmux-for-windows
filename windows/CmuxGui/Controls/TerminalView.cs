@@ -42,6 +42,8 @@ public sealed partial class TerminalView : UserControl, IDisposable
     /// <summary>Scrim between the image and the grid, so text keeps its contrast.</summary>
     private readonly Microsoft.UI.Xaml.Shapes.Rectangle _mask = new();
 
+    private readonly MuxRuntime _mux;
+    private readonly string _tabId;
     private IntPtr _session;
     private CmuxNative.Cell[] _cells = Array.Empty<CmuxNative.Cell>();
     private CmuxNative.Frame _frame;
@@ -67,9 +69,12 @@ public sealed partial class TerminalView : UserControl, IDisposable
     /// <summary>Input typed before the session existed. See <see cref="Send"/>.</summary>
     private readonly List<byte> _pending = new();
     private int _inputTrace;
+    private bool _disposed;
 
-    public TerminalView()
+    internal TerminalView(MuxRuntime mux, string tabId)
     {
+        _mux = mux;
+        _tabId = tabId;
         _root.Children.Add(_backgroundImage);
         _root.Children.Add(_mask);
         _root.Children.Add(_canvas);
@@ -149,6 +154,8 @@ public sealed partial class TerminalView : UserControl, IDisposable
             Diag.Log($"terminal lost focus; now held by {holder}");
         };
     }
+
+    public string TabId => _tabId;
 
     private void OnCreateResources(CanvasControl sender, Microsoft.Graphics.Canvas.UI.CanvasCreateResourcesEventArgs args)
     {
@@ -267,17 +274,8 @@ public sealed partial class TerminalView : UserControl, IDisposable
         {
             try
             {
-                var folder = App.LaunchFolder;
-                if (string.IsNullOrWhiteSpace(folder))
-                {
-                    _session = CmuxNative.SessionNew(cols, rows);
-                }
-                else
-                {
-                    var cwd = Encoding.UTF8.GetBytes(folder);
-                    _session = CmuxNative.SessionNewIn(cols, rows, cwd, (nuint)cwd.Length);
-                }
-                Diag.Log($"SessionNew({cols},{rows}) -> {_session}");
+                _session = _mux.OpenTab(_tabId, cols, rows);
+                Diag.Log($"TabOpen({_tabId},{cols},{rows}) -> {_session}");
                 _status = _session == IntPtr.Zero
                     ? "cmux_session_new returned null"
                     : string.Empty;
@@ -685,6 +683,12 @@ public sealed partial class TerminalView : UserControl, IDisposable
 
     public void Dispose()
     {
+        if (_disposed)
+        {
+            return;
+        }
+        _disposed = true;
+
         AppSettings.Changed -= OnSettingsChanged;
         _timer.Stop();
         if (_session != IntPtr.Zero)

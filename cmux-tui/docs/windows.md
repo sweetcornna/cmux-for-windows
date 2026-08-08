@@ -12,6 +12,7 @@ is produced by Zig and linked into a GNU-ABI binary.
 | Area | Windows |
 | --- | --- |
 | Local multiplexer, workspaces, screens, panes, tabs | works |
+| Native WinUI 3 GUI workspace restoration | works, with fresh shells |
 | Terminals (ConPTY via `portable-pty`) | works |
 | Control socket + resource CLI (`terminal`, `workspace`, …) | works |
 | Browser panes (CDP) | untested |
@@ -95,11 +96,35 @@ The control socket lives under `%TEMP%\cmux-tui-<user>\<session>.sock`; durable
 state under `%LOCALAPPDATA%\cmux-tui\sessions`; config under
 `%APPDATA%\cmux\cmux-tui.json`.
 
+## Native GUI restoration
+
+The WinUI 3 frontend opens the persistent `cmux-gui` session. Its registry is
+under `%LOCALAPPDATA%\cmux-tui\sessions\cmux-gui-<session-hash>` unless
+`CMUX_TUI_STATE_DIR` overrides the state root. On launch the GUI restores the
+ordered workspace list and active workspace. The main content projects the
+core's authoritative screen layout as native split panes, with a tab strip in
+each pane. Pane focus, tab selection, terminal creation, splits, and closes are
+sent back to the core by stable public resource id; the GUI does not keep a
+second topology database.
+
+Terminal process state is deliberately not persistent. After a GUI restart,
+each restored logical terminal starts a fresh default shell in the user's home
+directory. cmux does not reattach the old ConPTY process, restore its output or
+scrollback, or replay its previous command line or working directory. A folder
+passed by an Explorer launch verb applies only to the new workspace created for
+that launch.
+
+Closing the window releases the current terminal views and preserves the
+workspace topology for the next launch. Closing a pane tab deletes that durable
+tab; the sidebar close-workspace action deletes the durable workspace.
+
 ## Test
 
 ```bash
 cargo test -p cmux-tui-core --lib --target x86_64-pc-windows-gnu --locked \
   workspace_registry::tests::
+cargo test -p cmux-tui-core --lib --target x86_64-pc-windows-gnu --locked \
+  persistent_gui_restart_restores_workspaces_with_fresh_default_shells
 ```
 
 The full suite does not pass on Windows yet. `mux.rs` test modules hardcode

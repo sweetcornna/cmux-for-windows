@@ -1,7 +1,10 @@
 using System;
+using System.Collections.Generic;
+using System.Linq;
 using CmuxGui.Controls;
 using CmuxGui.Services;
 using Microsoft.UI.Xaml;
+using Microsoft.UI.Xaml.Automation;
 using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Media;
 
@@ -9,35 +12,36 @@ namespace CmuxGui;
 
 public sealed partial class MainWindow : Window
 {
+    private sealed class WorkspaceEntry
+    {
+        public required MuxRuntime.WorkspaceInfo Workspace { get; init; }
+        public required WorkspaceView View { get; init; }
+        public required NavigationViewItem Item { get; init; }
+    }
+
+    private readonly MuxRuntime _mux;
+    private readonly Dictionary<ulong, WorkspaceEntry> _workspaces = [];
     private int _tabCounter;
-    /// <summary>Guards the two-way sync between nav selection and tab selection.</summary>
-    private bool _syncing;
-    /// <summary>Focus is pointless before this: see <see cref="FocusSelectedTerminal"/>.</summary>
     private bool _windowActivated;
+    private bool _closed;
 
     public MainWindow()
     {
         InitializeComponent();
+        _mux = MuxRuntime.Open();
 
-        // Let the app own the caption area so the title bar reads as part of
-        // the window rather than a separate system strip.
         ExtendsContentIntoTitleBar = true;
         SetTitleBar(AppTitleBar);
 
         Relocalize();
-
         ApplyAppearance();
         AppSettings.Changed += ApplyAppearance;
         AppSettings.Changed += Relocalize;
 
-        Tabs.SelectionChanged += OnTabSelectionChanged;
-
-        // XAML focus is not window focus. Taking focus at load succeeds while
-        // the window is still inactive, and NavigationView then focuses its own
-        // search box, so the first keystrokes went nowhere until a click.
         Activated += OnWindowActivated;
+        Closed += OnWindowClosed;
 
-        AddTerminalTab();
+        RestoreWorkspaces();
     }
 
     private void OnWindowActivated(object sender, WindowActivatedEventArgs e)
@@ -50,36 +54,26 @@ public sealed partial class MainWindow : Window
         FocusSelectedTerminal("window-activated");
     }
 
-    /// <summary>
-    /// Focus the visible terminal, once that is actually possible.
-    ///
-    /// Two things have to have happened, in either order, and at startup they
-    /// arrive in the unhelpful one: the window activates before the first tab's
-    /// content is in the visual tree. Focusing an unloaded element silently does
-    /// nothing, and the activation never repeats, so the terminal stayed
-    /// unfocused until the user clicked it. Both paths call this, and whichever
-    /// completes last is the one that takes focus.
-    /// </summary>
     private void FocusSelectedTerminal(string reason)
     {
-        if (!_windowActivated)
+        if (_windowActivated && WorkspaceHost.Content is WorkspaceView view)
         {
-            return;
-        }
-        if (Tabs.SelectedItem is TabViewItem { Content: TerminalView view })
-        {
-            view.FocusTerminal(reason);
+            view.FocusSelectedTerminal(reason);
         }
     }
 
-    /// <summary>Re-read chrome strings, so a language change shows up at once.</summary>
     private void Relocalize()
     {
         NavSearch.PlaceholderText = Loc.S("Nav_Search");
         WorkspacesHeader.Content = Loc.S("Nav_Workspaces");
+        var newWorkspace = Loc.S("Workspace_New");
+        var closeWorkspace = Loc.S("Workspace_Close");
+        ToolTipService.SetToolTip(NewWorkspaceButton, newWorkspace);
+        ToolTipService.SetToolTip(CloseWorkspaceButton, closeWorkspace);
+        AutomationProperties.SetName(NewWorkspaceButton, newWorkspace);
+        AutomationProperties.SetName(CloseWorkspaceButton, closeWorkspace);
     }
 
-    /// <summary>Apply the window-level parts of the appearance settings.</summary>
     private void ApplyAppearance()
     {
         var settings = AppSettings.Current;
@@ -88,15 +82,11 @@ public sealed partial class MainWindow : Window
             || (!string.IsNullOrWhiteSpace(settings.AppImagePath)
                 && System.IO.File.Exists(settings.AppImagePath));
 
-        // A system backdrop paints over anything behind it, so a custom colour
-        // or image can only show if the backdrop is switched off.
         SystemBackdrop = hasCustomBackground
             ? null
             : settings.Backdrop switch
             {
                 BackdropKind.Mica => new MicaBackdrop { Kind = Microsoft.UI.Composition.SystemBackdrops.MicaKind.BaseAlt },
-                // Acrylic is the blurred one; its tint opacity is what "blur
-                // amount" maps to, since WinUI exposes no blur radius directly.
                 BackdropKind.Acrylic => new DesktopAcrylicBackdrop(),
                 _ => null,
             };
@@ -139,45 +129,88 @@ public sealed partial class MainWindow : Window
         }
     }
 
-    private void AddTerminalTab()
+    private void RestoreWorkspaces()
     {
-        _tabCounter++;
-        var title = $"PowerShell {_tabCounter}";
-        var view = new TerminalView();
-        // The other half of the startup race: if the window already activated
-        // while this was still being built, this is the event that grants focus.
-        view.Loaded += (_, _) => FocusSelectedTerminal("tab-loaded");
-        var tab = new TabViewItem
+        var workspaces = _mux.Workspaces();
+        _tabCounter = workspaces
+            .Select(workspace => WorkspaceNumber(workspace.Name))
+            .DefaultIfEmpty()
+            .Max();
+
+        if (!string.IsNullOrWhiteSpace(App.LaunchFolder))
         {
-            Header = title,
-            IconSource = new SymbolIconSource { Symbol = Symbol.Document },
-            Content = view,
-            // TabViewItem aligns content to the top by default, which hands the
-            // child its *desired* height. A CanvasControl has no intrinsic size,
-            // so it asks for zero and renders nothing. Stretch is required.
-            VerticalContentAlignment = VerticalAlignment.Stretch,
-            HorizontalContentAlignment = HorizontalAlignment.Stretch,
-        };
-        Tabs.TabItems.Add(tab);
+            var workspace = _mux.CreateWorkspace(NextWorkspaceTitle());
+            if (!_mux.CreateTerminal(workspace.PublicId, App.LaunchFolder))
+            {
+                throw new InvalidOperationException("The Explorer workspace terminal could not be created.");
+            }
+            workspaces = _mux.Workspaces();
+        }
+        else if (workspaces.Count == 0)
+        {
+            var workspace = _mux.CreateWorkspace(NextWorkspaceTitle());
+            if (!_mux.CreateTerminal(workspace.PublicId))
+            {
+                throw new InvalidOperationException("The initial workspace terminal could not be created.");
+            }
+            workspaces = _mux.Workspaces();
+        }
 
-        // Mirror the tab into the sidebar. cmux's pane is a session list, so an
-        // empty rail reads as unfinished rather than minimal.
-        Nav.MenuItems.Add(BuildSessionItem(title, tab));
-
-        Tabs.SelectedItem = tab;
+        var snapshot = _mux.Snapshot();
+        WorkspaceEntry? selected = null;
+        foreach (var workspace in workspaces)
+        {
+            var entry = AddWorkspace(workspace, snapshot);
+            if (workspace.Active)
+            {
+                selected = entry;
+            }
+        }
+        selected ??= _workspaces.Values.FirstOrDefault();
+        if (selected is not null)
+        {
+            Nav.SelectedItem = selected.Item;
+            ShowWorkspace(selected);
+        }
     }
 
-    /// <summary>A sidebar row: title over its working directory, like cmux.</summary>
-    private static NavigationViewItem BuildSessionItem(string title, TabViewItem tab)
+    private WorkspaceEntry AddWorkspace(
+        MuxRuntime.WorkspaceInfo workspace,
+        MuxSnapshot snapshot)
+    {
+        var view = new WorkspaceView(_mux, workspace);
+        view.Render(snapshot);
+        view.Loaded += (_, _) => FocusSelectedTerminal("workspace-loaded");
+
+        var item = BuildSessionItem(workspace, snapshot);
+        var entry = new WorkspaceEntry
+        {
+            Workspace = workspace,
+            View = view,
+            Item = item,
+        };
+        item.Tag = entry;
+
+        var menu = new MenuFlyout();
+        var close = new MenuFlyoutItem { Text = Loc.S("Workspace_Close") };
+        close.Click += (_, _) => CloseWorkspace(entry);
+        menu.Items.Add(close);
+        item.ContextFlyout = menu;
+
+        _workspaces.Add(workspace.Id, entry);
+        Nav.MenuItems.Add(item);
+        return entry;
+    }
+
+    private static NavigationViewItem BuildSessionItem(
+        MuxRuntime.WorkspaceInfo workspace,
+        MuxSnapshot snapshot)
     {
         var text = new StackPanel();
-        text.Children.Add(new TextBlock { Text = title });
+        text.Children.Add(new TextBlock { Text = workspace.Name });
         text.Children.Add(new TextBlock
         {
-            // The session's actual directory, not a hardcoded guess.
-            Text = App.LaunchFolder is { Length: > 0 } folder
-                ? folder
-                : Environment.GetFolderPath(Environment.SpecialFolder.UserProfile),
+            Text = WorkspaceSubtitle(workspace, snapshot),
             Style = Application.Current.Resources["CaptionTextBlockStyle"] as Style,
             Foreground = Application.Current.Resources["TextFillColorSecondaryBrush"] as Brush,
             TextTrimming = TextTrimming.CharacterEllipsis,
@@ -187,87 +220,146 @@ public sealed partial class MainWindow : Window
         {
             Content = text,
             Icon = new SymbolIcon(Symbol.Document),
-            Tag = tab,
         };
     }
 
-    private void OnTabSelectionChanged(object sender, SelectionChangedEventArgs e)
+    private static string WorkspaceSubtitle(
+        MuxRuntime.WorkspaceInfo workspace,
+        MuxSnapshot snapshot)
     {
-        if (_syncing || Tabs.SelectedItem is not TabViewItem tab)
+        var screen = snapshot.Screens
+            .Where(candidate => candidate.WorkspaceId == workspace.PublicId)
+            .OrderBy(candidate => candidate.Index)
+            .FirstOrDefault();
+        var activePane = screen?.Layout.ActivePaneId;
+        var tab = snapshot.Tabs.FirstOrDefault(candidate =>
+            candidate.PaneId == activePane && candidate.Focused);
+        var cwd = tab is null
+            ? null
+            : snapshot.Terminals.FirstOrDefault(terminal => terminal.Id == tab.ContentId)?.Cwd;
+        return !string.IsNullOrWhiteSpace(cwd)
+            ? cwd
+            : Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
+    }
+
+    private string NextWorkspaceTitle() => $"PowerShell {++_tabCounter}";
+
+    private static int WorkspaceNumber(string name)
+    {
+        const string prefix = "PowerShell ";
+        return name.StartsWith(prefix, StringComparison.Ordinal)
+            && int.TryParse(name[prefix.Length..], out var number)
+                ? number
+                : 0;
+    }
+
+    private void OnAddWorkspace(object sender, RoutedEventArgs args)
+    {
+        var workspace = _mux.CreateWorkspace(NextWorkspaceTitle());
+        if (!_mux.CreateTerminal(workspace.PublicId))
         {
+            Diag.Log($"workspace terminal creation failed: {workspace.PublicId}");
             return;
         }
-        _syncing = true;
-        try
+        workspace = _mux.Workspaces().Single(candidate => candidate.Id == workspace.Id);
+        var entry = AddWorkspace(workspace, _mux.Snapshot());
+        Nav.SelectedItem = entry.Item;
+        ShowWorkspace(entry);
+    }
+
+    private void OnCloseWorkspace(object sender, RoutedEventArgs args)
+    {
+        if (Nav.SelectedItem is NavigationViewItem { Tag: WorkspaceEntry entry })
         {
-            foreach (var item in Nav.MenuItems)
-            {
-                if (item is NavigationViewItem nav && ReferenceEquals(nav.Tag, tab))
-                {
-                    Nav.SelectedItem = nav;
-                    break;
-                }
-            }
-        }
-        finally
-        {
-            _syncing = false;
+            CloseWorkspace(entry);
         }
     }
 
-    private void OnAddTab(TabView sender, object args) => AddTerminalTab();
-
-    private void OnCloseTab(TabView sender, TabViewTabCloseRequestedEventArgs args)
+    private void CloseWorkspace(WorkspaceEntry entry)
     {
-        if (args.Tab.Content is IDisposable disposable)
+        if (!_mux.CloseWorkspace(entry.Workspace.Id))
         {
-            disposable.Dispose();
-        }
-        sender.TabItems.Remove(args.Tab);
-
-        foreach (var item in Nav.MenuItems)
-        {
-            if (item is NavigationViewItem nav && ReferenceEquals(nav.Tag, args.Tab))
-            {
-                Nav.MenuItems.Remove(nav);
-                break;
-            }
+            Diag.Log($"workspace close failed: {entry.Workspace.Id}");
+            return;
         }
 
-        // Closing the last tab closes the window, matching terminal convention.
-        if (sender.TabItems.Count == 0)
+        var wasVisible = ReferenceEquals(WorkspaceHost.Content, entry.View);
+        entry.View.Dispose();
+        _workspaces.Remove(entry.Workspace.Id);
+        Nav.MenuItems.Remove(entry.Item);
+
+        if (_workspaces.Count == 0)
         {
             Close();
+            return;
+        }
+        if (wasVisible)
+        {
+            var next = _workspaces.Values.First();
+            Nav.SelectedItem = next.Item;
+            ShowWorkspace(next);
         }
     }
 
-    private void OnNavSelectionChanged(NavigationView sender, NavigationViewSelectionChangedEventArgs args)
+    private void OnNavSelectionChanged(
+        NavigationView sender,
+        NavigationViewSelectionChangedEventArgs args)
     {
-        // Workspace destinations arrive once the engine exposes them across the
-        // FFI boundary; Settings is wired up now.
         if (args.IsSettingsSelected)
         {
             SettingsFrame.Navigate(typeof(Views.SettingsPage));
             SettingsFrame.Visibility = Visibility.Visible;
-            Tabs.Visibility = Visibility.Collapsed;
+            WorkspaceHost.Visibility = Visibility.Collapsed;
+            CloseWorkspaceButton.IsEnabled = false;
             return;
         }
 
         SettingsFrame.Visibility = Visibility.Collapsed;
-        Tabs.Visibility = Visibility.Visible;
+        WorkspaceHost.Visibility = Visibility.Visible;
+        CloseWorkspaceButton.IsEnabled = true;
+        if (args.SelectedItem is NavigationViewItem { Tag: WorkspaceEntry entry })
+        {
+            ShowWorkspace(entry);
+        }
+    }
 
-        if (_syncing || args.SelectedItem is not NavigationViewItem { Tag: TabViewItem tab })
+    private void ShowWorkspace(WorkspaceEntry entry)
+    {
+        if (!_mux.SelectWorkspace(entry.Workspace.Id))
+        {
+            Diag.Log($"workspace selection failed: {entry.Workspace.Id}");
+            return;
+        }
+        try
+        {
+            entry.View.Render(_mux.Snapshot());
+        }
+        catch (Exception ex)
+        {
+            Diag.Log($"workspace render failed: {ex.Message}");
+        }
+        WorkspaceHost.Content = entry.View;
+        FocusSelectedTerminal("workspace-selected");
+    }
+
+    private void OnWindowClosed(object sender, WindowEventArgs args)
+    {
+        if (_closed)
         {
             return;
         }
-        _syncing = true;
-        try
+        _closed = true;
+
+        AppSettings.Changed -= ApplyAppearance;
+        AppSettings.Changed -= Relocalize;
+        Activated -= OnWindowActivated;
+        Closed -= OnWindowClosed;
+
+        foreach (var entry in _workspaces.Values)
         {
-            Tabs.SelectedItem = tab;
+            entry.View.Dispose();
         }
-        finally
-        {
-            _syncing = false;
-        }
+        _workspaces.Clear();
+        _mux.Dispose();
     }
 }

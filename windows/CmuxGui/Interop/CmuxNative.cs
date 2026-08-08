@@ -13,6 +13,7 @@ internal static partial class CmuxNative
 
     /// <summary>Sentinel meaning "no explicit colour; use the frame default".</summary>
     public const uint NoColor = 0xFFFF_FFFF;
+    public const int ErrorCapacity = -3;
 
     [StructLayout(LayoutKind.Sequential)]
     public struct Cell
@@ -38,6 +39,39 @@ internal static partial class CmuxNative
         public byte Reserved1;
         public uint DefaultFg;
         public uint DefaultBg;
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    public unsafe struct Workspace
+    {
+        public ulong Id;
+        public byte Active;
+        private fixed byte _reserved[7];
+        public fixed byte NameUtf8[256];
+        public fixed byte PublicIdUtf8[64];
+    }
+
+    public static unsafe string NameOf(in Workspace workspace)
+    {
+        fixed (byte* p = workspace.NameUtf8)
+        {
+            return DecodeUtf8(p, 256);
+        }
+    }
+
+    public static unsafe string PublicIdOf(in Workspace workspace)
+    {
+        fixed (byte* p = workspace.PublicIdUtf8)
+        {
+            return DecodeUtf8(p, 64);
+        }
+    }
+
+    private static unsafe string DecodeUtf8(byte* value, int capacity)
+    {
+        var span = new ReadOnlySpan<byte>(value, capacity);
+        var end = span.IndexOf((byte)0);
+        return System.Text.Encoding.UTF8.GetString(span[..(end < 0 ? capacity : end)]);
     }
 
     /// <summary>Appearance read from the user's Ghostty config.</summary>
@@ -70,6 +104,83 @@ internal static partial class CmuxNative
             return System.Text.Encoding.UTF8.GetString(span[..(end < 0 ? 128 : end)]);
         }
     }
+
+    [LibraryImport(Library, EntryPoint = "cmux_mux_open")]
+    public static partial IntPtr MuxOpen();
+
+    [LibraryImport(Library, EntryPoint = "cmux_mux_free")]
+    public static partial void MuxFree(IntPtr mux);
+
+    [LibraryImport(Library, EntryPoint = "cmux_mux_last_error")]
+    public static partial int MuxLastError(IntPtr mux, Span<byte> buffer, nuint capacity);
+
+    [LibraryImport(Library, EntryPoint = "cmux_mux_workspace_count")]
+    public static partial int MuxWorkspaceCount(IntPtr mux);
+
+    [LibraryImport(Library, EntryPoint = "cmux_mux_workspace_get")]
+    public static partial int MuxWorkspaceGet(IntPtr mux, nuint index, out Workspace workspace);
+
+    [LibraryImport(Library, EntryPoint = "cmux_mux_workspace_create")]
+    public static partial ulong MuxWorkspaceCreate(IntPtr mux, ReadOnlySpan<byte> name, nuint nameLen);
+
+    [LibraryImport(Library, EntryPoint = "cmux_mux_workspace_select")]
+    public static partial int MuxWorkspaceSelect(IntPtr mux, ulong workspace);
+
+    [LibraryImport(Library, EntryPoint = "cmux_mux_workspace_close")]
+    public static partial int MuxWorkspaceClose(IntPtr mux, ulong workspace);
+
+    [LibraryImport(Library, EntryPoint = "cmux_mux_workspace_open")]
+    public static partial IntPtr MuxWorkspaceOpen(
+        IntPtr mux,
+        ulong workspace,
+        ushort cols,
+        ushort rows,
+        ReadOnlySpan<byte> cwd,
+        nuint cwdLen);
+
+    [LibraryImport(Library, EntryPoint = "cmux_mux_snapshot_json")]
+    public static partial int MuxSnapshotJson(IntPtr mux, Span<byte> buffer, nuint capacity);
+
+    [LibraryImport(Library, EntryPoint = "cmux_mux_tab_open")]
+    public static partial IntPtr MuxTabOpen(
+        IntPtr mux,
+        ReadOnlySpan<byte> tab,
+        nuint tabLen,
+        ushort cols,
+        ushort rows);
+
+    [LibraryImport(Library, EntryPoint = "cmux_mux_workspace_create_terminal")]
+    public static partial int MuxWorkspaceCreateTerminal(
+        IntPtr mux,
+        ReadOnlySpan<byte> workspace,
+        nuint workspaceLen,
+        ReadOnlySpan<byte> cwd,
+        nuint cwdLen);
+
+    [LibraryImport(Library, EntryPoint = "cmux_mux_pane_create_terminal")]
+    public static partial int MuxPaneCreateTerminal(
+        IntPtr mux,
+        ReadOnlySpan<byte> pane,
+        nuint paneLen);
+
+    [LibraryImport(Library, EntryPoint = "cmux_mux_pane_split")]
+    public static partial int MuxPaneSplit(
+        IntPtr mux,
+        ReadOnlySpan<byte> pane,
+        nuint paneLen,
+        byte direction);
+
+    [LibraryImport(Library, EntryPoint = "cmux_mux_pane_focus")]
+    public static partial int MuxPaneFocus(IntPtr mux, ReadOnlySpan<byte> pane, nuint paneLen);
+
+    [LibraryImport(Library, EntryPoint = "cmux_mux_pane_close")]
+    public static partial int MuxPaneClose(IntPtr mux, ReadOnlySpan<byte> pane, nuint paneLen);
+
+    [LibraryImport(Library, EntryPoint = "cmux_mux_tab_select")]
+    public static partial int MuxTabSelect(IntPtr mux, ReadOnlySpan<byte> tab, nuint tabLen);
+
+    [LibraryImport(Library, EntryPoint = "cmux_mux_tab_close")]
+    public static partial int MuxTabClose(IntPtr mux, ReadOnlySpan<byte> tab, nuint tabLen);
 
     [LibraryImport(Library, EntryPoint = "cmux_session_new")]
     public static partial IntPtr SessionNew(ushort cols, ushort rows);

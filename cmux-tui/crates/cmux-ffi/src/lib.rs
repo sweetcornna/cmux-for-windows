@@ -10,7 +10,7 @@
 
 pub mod ghostty_config;
 
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 use cmux_tui_core::{DefaultColors, Mux, Surface, SurfaceOptions};
 use ghostty_vt::{CellWidth, Dirty, RenderState, Rgb};
@@ -123,7 +123,35 @@ pub unsafe extern "C" fn cmux_theme_load(out: *mut CmuxTheme) -> i32 {
     0
 }
 
-/// Opaque handle owned by the caller.
+/// One application-level persistent mux shared by all native workspace views.
+pub struct CmuxMux {
+    mux: Arc<Mux>,
+    last_error: Mutex<String>,
+}
+
+impl CmuxMux {
+    fn record_error(&self, error: &impl std::fmt::Display) -> i32 {
+        *self.last_error.lock().unwrap() = format!("{error:#}");
+        CMUX_ERR_ENGINE
+    }
+
+    fn clear_error(&self) {
+        self.last_error.lock().unwrap().clear();
+    }
+}
+
+/// Workspace metadata copied into caller-owned memory.
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct CmuxWorkspace {
+    pub id: u64,
+    pub active: u8,
+    pub _reserved: [u8; 7],
+    pub name_utf8: [u8; 256],
+    pub public_id_utf8: [u8; 64],
+}
+
+/// Opaque terminal view handle owned by the caller.
 pub struct CmuxSession {
     _mux: Arc<Mux>,
     surface: Arc<Surface>,
@@ -134,6 +162,480 @@ pub struct CmuxSession {
 
 fn pack(color: Rgb) -> u32 {
     ((color.r as u32) << 16) | ((color.g as u32) << 8) | color.b as u32
+}
+
+unsafe fn optional_utf8(value: *const u8, len: usize) -> Option<String> {
+    if value.is_null() || len == 0 {
+        return None;
+    }
+    let bytes = unsafe { std::slice::from_raw_parts(value, len) };
+    std::str::from_utf8(bytes)
+        .ok()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_owned)
+}
+
+unsafe fn required_utf8(value: *const u8, len: usize) -> Result<String, i32> {
+    if value.is_null() || len == 0 {
+        return Err(CMUX_ERR_NULL);
+    }
+    unsafe { optional_utf8(value, len) }.ok_or(CMUX_ERR_ENGINE)
+}
+
+fn copy_utf8<const N: usize>(value: &str) -> [u8; N] {
+    let mut output = [0; N];
+    let bytes = value.as_bytes();
+    let mut len = bytes.len().min(N.saturating_sub(1));
+    while len > 0 && !value.is_char_boundary(len) {
+        len -= 1;
+    }
+    output[..len].copy_from_slice(&bytes[..len]);
+    output
+}
+
+fn session_from_surface(
+    mux: Arc<Mux>,
+    surface: Arc<Surface>,
+    cols: u16,
+    rows: u16,
+) -> *mut CmuxSession {
+    let config = GhosttyConfig::load();
+    surface.set_default_colors(DefaultColors {
+        fg: Some(config.foreground.unwrap_or(ghostty_config::DEFAULT_FOREGROUND)),
+        bg: Some(config.background.unwrap_or(ghostty_config::DEFAULT_BACKGROUND)),
+        cursor: config.cursor_color,
+        selection_bg: config.selection_background,
+        selection_fg: config.selection_foreground,
+        palette: config.palette,
+        ..DefaultColors::default()
+    });
+    let Ok(render) = RenderState::new() else {
+        return std::ptr::null_mut();
+    };
+    Box::into_raw(Box::new(CmuxSession { _mux: mux, surface, render, cols, rows }))
+}
+
+/// Open the persistent mux used by the Windows GUI.
+#[unsafe(no_mangle)]
+pub extern "C" fn cmux_mux_open() -> *mut CmuxMux {
+    let Some(root) = cmux_tui_core::platform::workspace_state_dir() else {
+        return std::ptr::null_mut();
+    };
+    match Mux::open_persistent("cmux-gui", SurfaceOptions::default(), &root) {
+        Ok(mux) => Box::into_raw(Box::new(CmuxMux { mux, last_error: Mutex::new(String::new()) })),
+        Err(_) => std::ptr::null_mut(),
+    }
+}
+
+/// Release a mux created by [`cmux_mux_open`].
+///
+/// # Safety
+/// `mux` must be a live pointer returned by [`cmux_mux_open`], or null.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn cmux_mux_free(mux: *mut CmuxMux) {
+    if !mux.is_null() {
+        drop(unsafe { Box::from_raw(mux) });
+    }
+}
+
+/// Copy the most recent mux operation error as UTF-8.
+///
+/// Calling with a null `buffer` and zero `capacity` returns the required byte
+/// count. The error is retained until a later operation succeeds.
+///
+/// # Safety
+/// `mux` must be live. A non-null `buffer` must be writable for `capacity` bytes.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn cmux_mux_last_error(
+    mux: *mut CmuxMux,
+    buffer: *mut u8,
+    capacity: usize,
+) -> i32 {
+    if mux.is_null() || (buffer.is_null() && capacity != 0) {
+        return CMUX_ERR_NULL;
+    }
+    let mux = unsafe { &*mux };
+    let error = mux.last_error.lock().unwrap();
+    let bytes = error.as_bytes();
+    let Ok(written) = i32::try_from(bytes.len()) else {
+        return CMUX_ERR_ENGINE;
+    };
+    if buffer.is_null() {
+        return written;
+    }
+    if bytes.len() > capacity {
+        return CMUX_ERR_CAPACITY;
+    }
+    unsafe { std::ptr::copy_nonoverlapping(bytes.as_ptr(), buffer, bytes.len()) };
+    written
+}
+
+/// Return the number of durable workspaces, or a negative error code.
+///
+/// # Safety
+/// `mux` must be a live mux pointer.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn cmux_mux_workspace_count(mux: *mut CmuxMux) -> i32 {
+    if mux.is_null() {
+        return CMUX_ERR_NULL;
+    }
+    let mux = unsafe { &*mux };
+    i32::try_from(mux.mux.with_state(|state| state.workspaces.len())).unwrap_or(CMUX_ERR_ENGINE)
+}
+
+/// Copy one ordered workspace record into `out`.
+///
+/// # Safety
+/// `mux` must be live and `out` must be writable.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn cmux_mux_workspace_get(
+    mux: *mut CmuxMux,
+    index: usize,
+    out: *mut CmuxWorkspace,
+) -> i32 {
+    if mux.is_null() || out.is_null() {
+        return CMUX_ERR_NULL;
+    }
+    let mux = unsafe { &*mux };
+    let Some(workspace) = mux.mux.with_state(|state| {
+        state.workspaces.get(index).map(|workspace| CmuxWorkspace {
+            id: workspace.id,
+            active: u8::from(index == state.active_workspace),
+            _reserved: [0; 7],
+            name_utf8: copy_utf8(&workspace.name),
+            public_id_utf8: copy_utf8(workspace.public_id.as_str()),
+        })
+    }) else {
+        return CMUX_ERR_ENGINE;
+    };
+    unsafe { *out = workspace };
+    0
+}
+
+/// Add an empty durable workspace and return its numeric id, or zero on failure.
+///
+/// # Safety
+/// `name` must point to `name_len` bytes of UTF-8, or be null.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn cmux_mux_workspace_create(
+    mux: *mut CmuxMux,
+    name: *const u8,
+    name_len: usize,
+) -> u64 {
+    if mux.is_null() || (name.is_null() && name_len != 0) {
+        return 0;
+    }
+    let mux = unsafe { &*mux };
+    let name = unsafe { optional_utf8(name, name_len) };
+    mux.mux
+        .create_empty_workspace(name, None, None)
+        .map(|placement| placement.workspace)
+        .unwrap_or(0)
+}
+
+/// Persist the selected workspace.
+///
+/// # Safety
+/// `mux` must be a live mux pointer.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn cmux_mux_workspace_select(mux: *mut CmuxMux, workspace: u64) -> i32 {
+    if mux.is_null() {
+        return CMUX_ERR_NULL;
+    }
+    let mux = unsafe { &*mux };
+    let Some(index) = mux.mux.with_state(|state| {
+        state.workspaces.iter().position(|candidate| candidate.id == workspace)
+    }) else {
+        return CMUX_ERR_ENGINE;
+    };
+    mux.mux.select_workspace(Some(index), None);
+    if mux.mux.with_state(|state| state.active_workspace == index) { 0 } else { CMUX_ERR_ENGINE }
+}
+
+/// Close a workspace and all of its durable resources.
+///
+/// # Safety
+/// `mux` must be a live mux pointer.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn cmux_mux_workspace_close(mux: *mut CmuxMux, workspace: u64) -> i32 {
+    if mux.is_null() {
+        return CMUX_ERR_NULL;
+    }
+    let mux = unsafe { &*mux };
+    if mux.mux.close_workspace(workspace) { 0 } else { CMUX_ERR_ENGINE }
+}
+
+/// Open the active terminal view for a workspace.
+///
+/// Empty workspaces use `cwd`; restored terminals always start a fresh default
+/// shell in the user's home directory.
+///
+/// # Safety
+/// `mux` must be live and `cwd` must point to `cwd_len` bytes of UTF-8, or be null.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn cmux_mux_workspace_open(
+    mux: *mut CmuxMux,
+    workspace: u64,
+    cols: u16,
+    rows: u16,
+    cwd: *const u8,
+    cwd_len: usize,
+) -> *mut CmuxSession {
+    if mux.is_null() || (cwd.is_null() && cwd_len != 0) {
+        return std::ptr::null_mut();
+    }
+    let mux = unsafe { &*mux };
+    let cwd =
+        unsafe { optional_utf8(cwd, cwd_len) }.filter(|path| std::path::Path::new(path).is_dir());
+    let cols = cols.max(1);
+    let rows = rows.max(1);
+    let Ok(surface) = mux.mux.open_workspace_terminal(workspace, cwd, Some((cols, rows))) else {
+        return std::ptr::null_mut();
+    };
+    session_from_surface(mux.mux.clone(), surface, cols, rows)
+}
+
+/// Copy the authoritative public mux snapshot as UTF-8 JSON.
+///
+/// Calling with a null `buffer` and zero `capacity` returns the required byte
+/// count. A caller that loses a size race receives [`CMUX_ERR_CAPACITY`] and
+/// should query the size again.
+///
+/// # Safety
+/// `mux` must be live. A non-null `buffer` must be writable for `capacity` bytes.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn cmux_mux_snapshot_json(
+    mux: *mut CmuxMux,
+    buffer: *mut u8,
+    capacity: usize,
+) -> i32 {
+    if mux.is_null() || (buffer.is_null() && capacity != 0) {
+        return CMUX_ERR_NULL;
+    }
+    let mux = unsafe { &*mux };
+    let Ok(snapshot) = mux.mux.public_session_snapshot_json() else {
+        return CMUX_ERR_ENGINE;
+    };
+    let bytes = snapshot.as_bytes();
+    let Ok(written) = i32::try_from(bytes.len()) else {
+        return CMUX_ERR_ENGINE;
+    };
+    if buffer.is_null() {
+        return written;
+    }
+    if bytes.len() > capacity {
+        return CMUX_ERR_CAPACITY;
+    }
+    unsafe { std::ptr::copy_nonoverlapping(bytes.as_ptr(), buffer, bytes.len()) };
+    written
+}
+
+/// Open one terminal tab by stable public id.
+///
+/// # Safety
+/// `mux` must be live and `tab` must point to `tab_len` bytes of UTF-8.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn cmux_mux_tab_open(
+    mux: *mut CmuxMux,
+    tab: *const u8,
+    tab_len: usize,
+    cols: u16,
+    rows: u16,
+) -> *mut CmuxSession {
+    if mux.is_null() {
+        return std::ptr::null_mut();
+    }
+    let Ok(tab) = (unsafe { required_utf8(tab, tab_len) }) else {
+        return std::ptr::null_mut();
+    };
+    let mux = unsafe { &*mux };
+    let cols = cols.max(1);
+    let rows = rows.max(1);
+    let Ok(surface) = mux.mux.open_public_terminal_tab(&tab, Some((cols, rows))) else {
+        return std::ptr::null_mut();
+    };
+    session_from_surface(mux.mux.clone(), surface, cols, rows)
+}
+
+/// Add a fresh default-shell terminal to a workspace addressed by public id.
+///
+/// # Safety
+/// String pointers must reference their declared UTF-8 byte lengths. `cwd` may
+/// be null when `cwd_len` is zero.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn cmux_mux_workspace_create_terminal(
+    mux: *mut CmuxMux,
+    workspace: *const u8,
+    workspace_len: usize,
+    cwd: *const u8,
+    cwd_len: usize,
+) -> i32 {
+    if mux.is_null() || (cwd.is_null() && cwd_len != 0) {
+        return CMUX_ERR_NULL;
+    }
+    let Ok(workspace) = (unsafe { required_utf8(workspace, workspace_len) }) else {
+        return CMUX_ERR_ENGINE;
+    };
+    let cwd =
+        unsafe { optional_utf8(cwd, cwd_len) }.filter(|path| std::path::Path::new(path).is_dir());
+    let mux = unsafe { &*mux };
+    match mux.mux.create_terminal_in_public_workspace(&workspace, cwd, None) {
+        Ok(_) => 0,
+        Err(_) => CMUX_ERR_ENGINE,
+    }
+}
+
+/// Add a terminal tab to a pane addressed by public id.
+///
+/// # Safety
+/// `pane` must point to `pane_len` bytes of UTF-8.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn cmux_mux_pane_create_terminal(
+    mux: *mut CmuxMux,
+    pane: *const u8,
+    pane_len: usize,
+) -> i32 {
+    if mux.is_null() {
+        return CMUX_ERR_NULL;
+    }
+    let Ok(pane) = (unsafe { required_utf8(pane, pane_len) }) else {
+        return CMUX_ERR_ENGINE;
+    };
+    let mux = unsafe { &*mux };
+    match mux.mux.create_terminal_tab_in_public_pane(&pane, None) {
+        Ok(_) => {
+            mux.clear_error();
+            0
+        }
+        Err(error) => mux.record_error(&error),
+    }
+}
+
+/// Split a pane and create a terminal in the new pane.
+///
+/// `direction` is zero for right and one for down.
+///
+/// # Safety
+/// `pane` must point to `pane_len` bytes of UTF-8.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn cmux_mux_pane_split(
+    mux: *mut CmuxMux,
+    pane: *const u8,
+    pane_len: usize,
+    direction: u8,
+) -> i32 {
+    if mux.is_null() {
+        return CMUX_ERR_NULL;
+    }
+    let Ok(pane) = (unsafe { required_utf8(pane, pane_len) }) else {
+        return CMUX_ERR_ENGINE;
+    };
+    let direction = match direction {
+        0 => cmux_tui_core::SplitDir::Right,
+        1 => cmux_tui_core::SplitDir::Down,
+        _ => return CMUX_ERR_ENGINE,
+    };
+    let mux = unsafe { &*mux };
+    match mux.mux.split_public_pane(&pane, direction, None) {
+        Ok(_) => {
+            mux.clear_error();
+            0
+        }
+        Err(error) => mux.record_error(&error),
+    }
+}
+
+/// Focus a pane addressed by public id.
+///
+/// # Safety
+/// `pane` must point to `pane_len` bytes of UTF-8.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn cmux_mux_pane_focus(
+    mux: *mut CmuxMux,
+    pane: *const u8,
+    pane_len: usize,
+) -> i32 {
+    if mux.is_null() {
+        return CMUX_ERR_NULL;
+    }
+    let Ok(pane) = (unsafe { required_utf8(pane, pane_len) }) else {
+        return CMUX_ERR_ENGINE;
+    };
+    let mux = unsafe { &*mux };
+    match mux.mux.focus_public_pane(&pane) {
+        Ok(true) => 0,
+        Ok(false) | Err(_) => CMUX_ERR_ENGINE,
+    }
+}
+
+/// Close a pane addressed by public id.
+///
+/// # Safety
+/// `pane` must point to `pane_len` bytes of UTF-8.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn cmux_mux_pane_close(
+    mux: *mut CmuxMux,
+    pane: *const u8,
+    pane_len: usize,
+) -> i32 {
+    if mux.is_null() {
+        return CMUX_ERR_NULL;
+    }
+    let Ok(pane) = (unsafe { required_utf8(pane, pane_len) }) else {
+        return CMUX_ERR_ENGINE;
+    };
+    let mux = unsafe { &*mux };
+    match mux.mux.close_public_pane(&pane) {
+        Ok(true) => 0,
+        Ok(false) | Err(_) => CMUX_ERR_ENGINE,
+    }
+}
+
+/// Select a tab addressed by public id.
+///
+/// # Safety
+/// `tab` must point to `tab_len` bytes of UTF-8.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn cmux_mux_tab_select(
+    mux: *mut CmuxMux,
+    tab: *const u8,
+    tab_len: usize,
+) -> i32 {
+    if mux.is_null() {
+        return CMUX_ERR_NULL;
+    }
+    let Ok(tab) = (unsafe { required_utf8(tab, tab_len) }) else {
+        return CMUX_ERR_ENGINE;
+    };
+    let mux = unsafe { &*mux };
+    match mux.mux.select_public_tab(&tab) {
+        Ok(true) => 0,
+        Ok(false) | Err(_) => CMUX_ERR_ENGINE,
+    }
+}
+
+/// Close a tab addressed by public id.
+///
+/// # Safety
+/// `tab` must point to `tab_len` bytes of UTF-8.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn cmux_mux_tab_close(
+    mux: *mut CmuxMux,
+    tab: *const u8,
+    tab_len: usize,
+) -> i32 {
+    if mux.is_null() {
+        return CMUX_ERR_NULL;
+    }
+    let Ok(tab) = (unsafe { required_utf8(tab, tab_len) }) else {
+        return CMUX_ERR_ENGINE;
+    };
+    let mux = unsafe { &*mux };
+    match mux.mux.close_public_tab(&tab) {
+        Ok(true) => 0,
+        Ok(false) | Err(_) => CMUX_ERR_ENGINE,
+    }
 }
 
 /// Create a session with one PTY running the platform's default shell.
@@ -184,25 +686,7 @@ fn session_new(cols: u16, rows: u16, cwd: Option<String>) -> *mut CmuxSession {
         return std::ptr::null_mut();
     };
 
-    // Adopt the user's Ghostty appearance, so cells resolve through the theme
-    // palette. This must come after the surface exists and go through the
-    // surface rather than the mux: `Mux::set_default_colors` only walks
-    // surfaces that already exist, and short-circuits when the stored value is
-    // unchanged, so seeding it earlier would silently apply to nothing.
-    let config = GhosttyConfig::load();
-    surface.set_default_colors(DefaultColors {
-        fg: Some(config.foreground.unwrap_or(ghostty_config::DEFAULT_FOREGROUND)),
-        bg: Some(config.background.unwrap_or(ghostty_config::DEFAULT_BACKGROUND)),
-        cursor: config.cursor_color,
-        selection_bg: config.selection_background,
-        selection_fg: config.selection_foreground,
-        palette: config.palette,
-        ..DefaultColors::default()
-    });
-    let Ok(render) = RenderState::new() else {
-        return std::ptr::null_mut();
-    };
-    Box::into_raw(Box::new(CmuxSession { _mux: mux, surface, render, cols, rows }))
+    session_from_surface(mux, surface, cols, rows)
 }
 
 /// Release a session created by [`cmux_session_new`].

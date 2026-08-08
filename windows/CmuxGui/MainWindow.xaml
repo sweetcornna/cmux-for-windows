@@ -54,22 +54,25 @@
                 <NavigationViewItemHeader x:Name="WorkspacesHeader" />
             </NavigationView.MenuItems>
 
-            <Grid>
-                <!-- The same control Windows Terminal uses for its tab strip.
-                     It hosts the selected tab's content itself, so the terminal
-                     lives inside the TabViewItem rather than a separate host. -->
-                <!-- TabView's default style aligns it to the top, so it
-                     collapses to the height of its tab strip and gives content
-                     zero height. Stretching is required to host a terminal. -->
-                <TabView
-                    x:Name="Tabs"
-                    VerticalAlignment="Stretch"
-                    IsAddTabButtonVisible="True"
-                    AddTabButtonClick="OnAddTab"
-                    TabCloseRequested="OnCloseTab" />
+            <NavigationView.PaneFooter>
+                <StackPanel Orientation="Horizontal" Spacing="8" Margin="4,8">
+                    <Button x:Name="NewWorkspaceButton" Click="OnAddWorkspace">
+                        <SymbolIcon Symbol="Add" />
+                    </Button>
+                    <Button x:Name="CloseWorkspaceButton" Click="OnCloseWorkspace">
+                        <SymbolIcon Symbol="Delete" />
+                    </Button>
+                </StackPanel>
+            </NavigationView.PaneFooter>
 
-                <!-- Settings overlays the terminal rather than replacing the
-                     tab strip, so sessions keep running while it is open. -->
+            <Grid>
+                <ContentControl
+                    x:Name="WorkspaceHost"
+                    HorizontalContentAlignment="Stretch"
+                    VerticalContentAlignment="Stretch" />
+
+                <!-- Settings overlays the workspace rather than replacing it,
+                     so every terminal process keeps running while it is open. -->
                 <Frame x:Name="SettingsFrame" Visibility="Collapsed" />
             </Grid>
         </NavigationView>

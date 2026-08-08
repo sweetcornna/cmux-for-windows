@@ -151,4 +151,40 @@
   <data name="Menu_SelectAll" xml:space="preserve">
     <value>全选</value>
   </data>
+  <data name="Workspace_New" xml:space="preserve">
+    <value>新建工作区</value>
+  </data>
+  <data name="Workspace_Close" xml:space="preserve">
+    <value>关闭工作区</value>
+  </data>
+  <data name="Pane_NewTerminal" xml:space="preserve">
+    <value>新建终端</value>
+  </data>
+  <data name="Pane_SplitRight" xml:space="preserve">
+    <value>向右分屏</value>
+  </data>
+  <data name="Pane_SplitDown" xml:space="preserve">
+    <value>向下分屏</value>
+  </data>
+  <data name="Pane_Close" xml:space="preserve">
+    <value>关闭窗格</value>
+  </data>
+  <data name="Pane_EmptyWorkspace" xml:space="preserve">
+    <value>此工作区中没有终端。</value>
+  </data>
+  <data name="Pane_Empty" xml:space="preserve">
+    <value>空窗格</value>
+  </data>
+  <data name="Pane_Terminal" xml:space="preserve">
+    <value>终端</value>
+  </data>
+  <data name="Pane_Browser" xml:space="preserve">
+    <value>浏览器</value>
+  </data>
+  <data name="Pane_Pane" xml:space="preserve">
+    <value>窗格</value>
+  </data>
+  <data name="Pane_BrowserUnavailable" xml:space="preserve">
+    <value>Windows 前端暂不支持浏览器窗格。</value>
+  </data>
 </root>

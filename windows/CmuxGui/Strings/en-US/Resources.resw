@@ -151,4 +151,40 @@
   <data name="Menu_SelectAll" xml:space="preserve">
     <value>Select all</value>
   </data>
+  <data name="Workspace_New" xml:space="preserve">
+    <value>New workspace</value>
+  </data>
+  <data name="Workspace_Close" xml:space="preserve">
+    <value>Close workspace</value>
+  </data>
+  <data name="Pane_NewTerminal" xml:space="preserve">
+    <value>New terminal</value>
+  </data>
+  <data name="Pane_SplitRight" xml:space="preserve">
+    <value>Split right</value>
+  </data>
+  <data name="Pane_SplitDown" xml:space="preserve">
+    <value>Split down</value>
+  </data>
+  <data name="Pane_Close" xml:space="preserve">
+    <value>Close pane</value>
+  </data>
+  <data name="Pane_EmptyWorkspace" xml:space="preserve">
+    <value>This workspace has no terminals.</value>
+  </data>
+  <data name="Pane_Empty" xml:space="preserve">
+    <value>Empty pane</value>
+  </data>
+  <data name="Pane_Terminal" xml:space="preserve">
+    <value>Terminal</value>
+  </data>
+  <data name="Pane_Browser" xml:space="preserve">
+    <value>Browser</value>
+  </data>
+  <data name="Pane_Pane" xml:space="preserve">
+    <value>Pane</value>
+  </data>
+  <data name="Pane_BrowserUnavailable" xml:space="preserve">
+    <value>Browser panes are not available in the Windows frontend yet.</value>
+  </data>
 </root>

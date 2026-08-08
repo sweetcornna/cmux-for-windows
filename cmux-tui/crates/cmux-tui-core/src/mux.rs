@@ -2305,6 +2305,188 @@ impl Mux {
         Ok(())
     }
 
+    fn reserve_restored_local_terminal(
+        &self,
+        terminal_id: &str,
+        launch_spec: Value,
+    ) -> anyhow::Result<TerminalHostIdentity> {
+        let mut registry = self.workspace_registry.lock().unwrap();
+        let mut terminal = registry
+            .terminal_record(terminal_id)?
+            .ok_or_else(|| anyhow::anyhow!("restored terminal {terminal_id} has no lifecycle"))?;
+        anyhow::ensure!(
+            terminal.lifecycle != TerminalLifecycle::Tombstoned,
+            "restored terminal {terminal_id} is closed"
+        );
+
+        if terminal.lifecycle != TerminalLifecycle::Exited {
+            let snapshot = registry.terminal_snapshot()?;
+            terminal.lifecycle = TerminalLifecycle::Exited;
+            let exit = TerminalExit::unknown("frontend-restarted");
+            terminal.exit = Some(serde_json::json!({
+                "outcome": exit.outcome,
+                "exited_at": exit.exited_at_ms.to_string(),
+            }));
+            let mutation = WorkspaceMutation::local("cmux-gui-runtime");
+            let commit = registry.commit_terminal(
+                &mutation,
+                &serde_json::json!({
+                    "op":"terminal-local-runtime-ended",
+                    "terminal_id":terminal_id,
+                    "incarnation":terminal.incarnation,
+                }),
+                Some(&snapshot.generation),
+                Some(snapshot.revision),
+                "terminal-exited",
+                &terminal,
+                &serde_json::json!({
+                    "terminal_id":terminal_id,
+                    "state":"exited",
+                    "reason":"frontend-restarted",
+                }),
+            )?;
+            self.emit_terminal_registry_changed(&registry, commit.revision);
+        }
+
+        let snapshot = registry.terminal_snapshot()?;
+        terminal = registry
+            .terminal_record(terminal_id)?
+            .ok_or_else(|| anyhow::anyhow!("restored terminal {terminal_id} disappeared"))?;
+        terminal.lifecycle = TerminalLifecycle::Launching;
+        terminal.incarnation = None;
+        terminal.launch_spec = launch_spec;
+        terminal.exit = None;
+        let mutation = WorkspaceMutation::local("cmux-gui-runtime");
+        let commit = registry.commit_terminal_relaunch(
+            &mutation,
+            &serde_json::json!({
+                "op":"restart-terminal-with-default-shell",
+                "terminal_id":terminal_id,
+            }),
+            Some(&snapshot.generation),
+            Some(snapshot.revision),
+            "terminal-reserved",
+            &terminal,
+            &serde_json::json!({
+                "terminal_id":terminal_id,
+                "workspace_key":terminal.workspace_key,
+                "state":"launching",
+            }),
+        )?;
+        self.emit_terminal_registry_changed(&registry, commit.revision);
+        Ok(TerminalHostIdentity {
+            terminal_id: terminal_id.to_string(),
+            incarnation: TerminalId::random()?.to_hex(),
+        })
+    }
+
+    fn mark_restored_local_terminal_exited(&self, identity: &TerminalHostIdentity, reason: &str) {
+        let mut registry = self.workspace_registry.lock().unwrap();
+        let exit = TerminalExit::unknown(reason);
+        if let Ok((_, revision)) = commit_terminal_lifecycle(
+            &mut registry,
+            "terminal-exited",
+            "restored-terminal-launch-failed",
+            &identity.terminal_id,
+            TerminalLifecycle::Exited,
+            Some(&identity.incarnation),
+            Some(serde_json::json!({
+                "outcome": exit.outcome,
+                "exited_at": exit.exited_at_ms.to_string(),
+            })),
+        ) {
+            self.emit_terminal_registry_changed(&registry, revision);
+        }
+    }
+
+    fn materialize_restored_local_terminal(
+        self: &Arc<Self>,
+        slot: SurfaceId,
+        identity: TabResourceIdentity,
+        size: Option<(u16, u16)>,
+    ) -> anyhow::Result<Arc<Surface>> {
+        let ContentPublicId::Terminal(public_id) = &identity.content_id else {
+            anyhow::bail!("active restored tab is not a terminal");
+        };
+        let terminal_id = self
+            .workspace_registry
+            .lock()
+            .unwrap()
+            .live_terminal_host_id(public_id)?
+            .with_context(|| format!("restored terminal {public_id} has no host identity"))?;
+        let mut options = self.surface_options.lock().unwrap().clone();
+        anyhow::ensure!(
+            options.terminal_host_root.is_none(),
+            "local terminal restart cannot replace a hosted terminal"
+        );
+        options.command = None;
+        options.cwd = None;
+        let (cols, rows) = self.resolve_client_size(size, (options.cols, options.rows));
+        options.cols = cols;
+        options.rows = rows;
+        let runtime_identity =
+            self.reserve_restored_local_terminal(&terminal_id, terminal_launch_spec(&options))?;
+
+        #[cfg(test)]
+        let surface_result = if self.test_surface_runtime {
+            Surface::spawn_for_test_with_resource_identity(
+                slot,
+                options,
+                Arc::downgrade(self),
+                Some(identity),
+            )
+        } else {
+            Surface::spawn_with_resource_identity(
+                slot,
+                options,
+                Arc::downgrade(self),
+                Some(identity),
+            )
+        };
+        #[cfg(not(test))]
+        let surface_result = Surface::spawn_with_resource_identity(
+            slot,
+            options,
+            Arc::downgrade(self),
+            Some(identity),
+        );
+        let surface = match surface_result {
+            Ok(surface) => surface,
+            Err(error) => {
+                self.mark_restored_local_terminal_exited(&runtime_identity, "launch-failed");
+                return Err(error);
+            }
+        };
+
+        if let Err(error) = self.transition_terminal_lifecycle(
+            "terminal-ready",
+            "restored-terminal-ready",
+            &runtime_identity.terminal_id,
+            TerminalLifecycle::Running,
+            Some(&runtime_identity.incarnation),
+            None,
+        ) {
+            surface.kill();
+            self.mark_restored_local_terminal_exited(&runtime_identity, "ready-commit-failed");
+            return Err(error);
+        }
+        let cell_pixel_lifecycle = self.reconcile_surface_cell_pixels_for_publish(&surface)?;
+        let insert_result = insert_restored_terminal_runtime_checked(
+            &mut self.state.lock().unwrap(),
+            surface.clone(),
+        );
+        drop(cell_pixel_lifecycle);
+        if let Err(error) = insert_result {
+            surface.kill();
+            self.mark_restored_local_terminal_exited(&runtime_identity, "surface-insert-failed");
+            return Err(error);
+        }
+        let runtime_id =
+            surface.terminal_runtime_id().context("restored terminal has no runtime identity")?;
+        self.reserved_in_process_terminals.lock().unwrap().insert(runtime_id, runtime_identity);
+        Ok(surface)
+    }
+
     #[cfg(unix)]
     fn restored_terminal_binding(
         &self,
@@ -9025,6 +9207,215 @@ impl Mux {
         let (cols, rows) = surface.size();
         self.emit_terminal_resized(id, cols, rows, None);
         Ok((true, None))
+    }
+
+    /// Serialize the authoritative public resource projection for native frontends.
+    pub fn public_session_snapshot_json(&self) -> anyhow::Result<String> {
+        let snapshot = crate::resource_api::public_session_snapshot(self)?;
+        Ok(serde_json::to_string(&snapshot)?)
+    }
+
+    fn workspace_slot_by_public_id(&self, public_id: &str) -> anyhow::Result<WorkspaceId> {
+        let public_id = WorkspacePublicId::parse(public_id.to_string())?;
+        self.with_state(|state| state.resource_indexes.workspaces.get(&public_id).copied())
+            .with_context(|| format!("unknown workspace {public_id}"))
+    }
+
+    fn pane_slot_by_public_id(&self, public_id: &str) -> anyhow::Result<PaneId> {
+        let public_id = PanePublicId::parse(public_id.to_string())?;
+        self.with_state(|state| state.resource_indexes.panes.get(&public_id).copied())
+            .with_context(|| format!("unknown pane {public_id}"))
+    }
+
+    fn tab_slot_by_public_id(&self, public_id: &str) -> anyhow::Result<SurfaceId> {
+        let public_id = TabPublicId::parse(public_id.to_string())?;
+        self.with_state(|state| state.resource_indexes.tabs.get(&public_id).copied())
+            .with_context(|| format!("unknown tab {public_id}"))
+    }
+
+    /// Open one terminal tab by its stable public identity.
+    pub fn open_public_terminal_tab(
+        self: &Arc<Self>,
+        public_id: &str,
+        size: Option<(u16, u16)>,
+    ) -> anyhow::Result<Arc<Surface>> {
+        enum Target {
+            Live(Arc<Surface>),
+            Restored(SurfaceId, TabResourceIdentity),
+        }
+
+        let slot = self.tab_slot_by_public_id(public_id)?;
+        let target = self.with_state(|state| -> anyhow::Result<Target> {
+            if let Some(surface) = state.surfaces.get(&slot) {
+                anyhow::ensure!(surface.kind() == SurfaceKind::Pty, "tab is not a terminal");
+                return Ok(Target::Live(surface.clone()));
+            }
+            let tab_id = state
+                .resource_indexes
+                .tab_ids
+                .get(&slot)
+                .cloned()
+                .context("restored terminal slot has no tab identity")?;
+            let content_id = state
+                .resource_indexes
+                .content_ids
+                .get(&slot)
+                .cloned()
+                .context("restored terminal slot has no content identity")?;
+            anyhow::ensure!(
+                matches!(content_id, ContentPublicId::Terminal(_)),
+                "restored tab is not a terminal"
+            );
+            Ok(Target::Restored(slot, TabResourceIdentity::new(tab_id, content_id)))
+        })?;
+
+        match target {
+            Target::Live(surface) => {
+                if let Some((cols, rows)) = size {
+                    surface.resize(cols.max(1), rows.max(1))?;
+                }
+                Ok(surface)
+            }
+            Target::Restored(slot, identity) => {
+                self.materialize_restored_local_terminal(slot, identity, size)
+            }
+        }
+    }
+
+    /// Add a fresh default-shell terminal to a workspace addressed by public id.
+    pub fn create_terminal_in_public_workspace(
+        self: &Arc<Self>,
+        workspace: &str,
+        cwd: Option<String>,
+        size: Option<(u16, u16)>,
+    ) -> anyhow::Result<Arc<Surface>> {
+        let workspace = self.workspace_slot_by_public_id(workspace)?;
+        self.create_terminal_surface_in_workspace(workspace, None, cwd, None, size)
+            .map(|(surface, _)| surface)
+    }
+
+    /// Add a fresh default-shell tab to a pane addressed by public id.
+    pub fn create_terminal_tab_in_public_pane(
+        self: &Arc<Self>,
+        pane: &str,
+        size: Option<(u16, u16)>,
+    ) -> anyhow::Result<Arc<Surface>> {
+        let pane = self.pane_slot_by_public_id(pane)?;
+        self.new_tab(Some(pane), None, size)
+    }
+
+    /// Split a pane addressed by public id and create a fresh terminal in the new pane.
+    pub fn split_public_pane(
+        self: &Arc<Self>,
+        pane: &str,
+        direction: SplitDir,
+        size: Option<(u16, u16)>,
+    ) -> anyhow::Result<Arc<Surface>> {
+        let pane = self.pane_slot_by_public_id(pane)?;
+        self.split(pane, direction, size)
+    }
+
+    /// Focus a pane addressed by public id.
+    pub fn focus_public_pane(self: &Arc<Self>, pane: &str) -> anyhow::Result<bool> {
+        let pane = self.pane_slot_by_public_id(pane)?;
+        Ok(self.focus_pane(pane))
+    }
+
+    /// Select a tab addressed by public id.
+    pub fn select_public_tab(self: &Arc<Self>, tab: &str) -> anyhow::Result<bool> {
+        let slot = self.tab_slot_by_public_id(tab)?;
+        let (pane, index) = self
+            .with_state(|state| {
+                let pane = state.resource_indexes.tab_pane.get(&slot).copied()?;
+                let index = state.panes.get(&pane)?.tabs.iter().position(|id| *id == slot)?;
+                Some((pane, index))
+            })
+            .context("tab has no pane placement")?;
+        self.select_tab(Some(pane), Some(index), None);
+        Ok(self.with_state(|state| {
+            state.panes.get(&pane).and_then(Pane::active_surface) == Some(slot)
+        }))
+    }
+
+    /// Close a tab addressed by public id.
+    pub fn close_public_tab(self: &Arc<Self>, tab: &str) -> anyhow::Result<bool> {
+        let slot = self.tab_slot_by_public_id(tab)?;
+        self.close_surface(slot)
+    }
+
+    /// Close a pane addressed by public id.
+    pub fn close_public_pane(self: &Arc<Self>, pane: &str) -> anyhow::Result<bool> {
+        let pane = self.pane_slot_by_public_id(pane)?;
+        self.close_pane(pane)
+    }
+
+    /// Return the active terminal for a workspace, creating its runtime when needed.
+    ///
+    /// An empty workspace receives a new terminal using `cwd`. A restored terminal
+    /// keeps its durable tab/content identity but starts a fresh default shell in
+    /// the user's home directory; persisted launch metadata is never replayed.
+    pub fn open_workspace_terminal(
+        self: &Arc<Self>,
+        workspace: WorkspaceId,
+        cwd: Option<String>,
+        size: Option<(u16, u16)>,
+    ) -> anyhow::Result<Arc<Surface>> {
+        enum Target {
+            Empty,
+            Live(Arc<Surface>),
+            Restored(SurfaceId, TabResourceIdentity),
+        }
+
+        let target = self.with_state(|state| -> anyhow::Result<Target> {
+            let workspace = state
+                .workspace_by_id(workspace)
+                .ok_or_else(|| anyhow::anyhow!("unknown workspace {workspace}"))?;
+            let Some(screen) = workspace.active_screen_ref() else {
+                return Ok(Target::Empty);
+            };
+            let pane = state
+                .panes
+                .get(&screen.active_pane)
+                .with_context(|| format!("workspace {} has no active pane", workspace.id))?;
+            let Some(slot) = pane.active_surface() else {
+                return Ok(Target::Empty);
+            };
+            if let Some(surface) = state.surfaces.get(&slot) {
+                return Ok(Target::Live(surface.clone()));
+            }
+            let tab_id = state
+                .resource_indexes
+                .tab_ids
+                .get(&slot)
+                .cloned()
+                .context("restored terminal slot has no tab identity")?;
+            let content_id = state
+                .resource_indexes
+                .content_ids
+                .get(&slot)
+                .cloned()
+                .context("restored terminal slot has no content identity")?;
+            anyhow::ensure!(
+                matches!(content_id, ContentPublicId::Terminal(_)),
+                "active restored tab is not a terminal"
+            );
+            Ok(Target::Restored(slot, TabResourceIdentity::new(tab_id, content_id)))
+        })?;
+
+        match target {
+            Target::Empty => self
+                .create_terminal_surface_in_workspace(workspace, None, cwd, None, size)
+                .map(|(surface, _)| surface),
+            Target::Live(surface) => {
+                if let Some((cols, rows)) = size {
+                    surface.resize(cols.max(1), rows.max(1))?;
+                }
+                Ok(surface)
+            }
+            Target::Restored(slot, identity) => {
+                self.materialize_restored_local_terminal(slot, identity, size)
+            }
+        }
     }
 
     /// Create a workspace with one screen holding one pane with one tab.
@@ -16857,6 +17248,148 @@ mod tests {
         });
         mux.shutdown();
         drop(mux);
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn public_frontend_projection_and_stable_id_mutations_share_mux_state() {
+        let mux = test_mux();
+        let workspace = mux.create_empty_workspace(Some("GUI".into()), None, None).unwrap();
+        let workspace_id = mux.with_state(|state| {
+            state.workspace_by_id(workspace.workspace).unwrap().public_id.to_string()
+        });
+
+        let first =
+            mux.create_terminal_in_public_workspace(&workspace_id, None, Some((80, 24))).unwrap();
+        let first_tab = first.resource_identity().unwrap().tab_id.to_string();
+        let pane_id = mux.with_state(|state| {
+            let pane = state.resource_indexes.tab_pane[&first.id];
+            state.resource_indexes.pane_ids[&pane].to_string()
+        });
+        assert_eq!(mux.open_public_terminal_tab(&first_tab, Some((90, 30))).unwrap().id, first.id);
+
+        let second = mux.create_terminal_tab_in_public_pane(&pane_id, Some((80, 24))).unwrap();
+        let second_tab = second.resource_identity().unwrap().tab_id.to_string();
+        assert!(mux.select_public_tab(&first_tab).unwrap());
+        assert!(mux.select_public_tab(&second_tab).unwrap());
+        assert!(mux.focus_public_pane(&pane_id).unwrap());
+
+        let split = mux.split_public_pane(&pane_id, SplitDir::Right, Some((80, 24))).unwrap();
+        let split_pane = mux.with_state(|state| {
+            let pane = state.resource_indexes.tab_pane[&split.id];
+            state.resource_indexes.pane_ids[&pane].to_string()
+        });
+        let snapshot: Value =
+            serde_json::from_str(&mux.public_session_snapshot_json().unwrap()).unwrap();
+        assert_eq!(snapshot["workspaces"][0]["id"], workspace_id);
+        assert_eq!(snapshot["screens"][0]["layout"]["root"]["kind"], "split");
+        assert_eq!(snapshot["panes"].as_array().unwrap().len(), 2);
+        assert_eq!(snapshot["tabs"].as_array().unwrap().len(), 3);
+
+        assert!(mux.close_public_tab(&second_tab).unwrap());
+        assert!(mux.close_public_pane(&split_pane).unwrap());
+        let snapshot: Value =
+            serde_json::from_str(&mux.public_session_snapshot_json().unwrap()).unwrap();
+        assert_eq!(snapshot["panes"].as_array().unwrap().len(), 1);
+        assert_eq!(snapshot["tabs"].as_array().unwrap().len(), 1);
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn persistent_gui_restart_restores_workspaces_with_fresh_default_shells() {
+        let root = std::env::temp_dir()
+            .join(format!("cmux-gui-restart-{}", WorkspacePublicId::random().unwrap()));
+        let session = "cmux-gui-restart";
+        let first = Mux::from_workspace_registry(
+            session.into(),
+            SurfaceOptions::default(),
+            WorkspaceRegistry::open(&root, session).unwrap(),
+            ProviderWorkspaceState::default(),
+            true,
+        )
+        .unwrap();
+        let alpha = first.create_empty_workspace(Some("Alpha".into()), None, None).unwrap();
+        let alpha_surface = first
+            .open_workspace_terminal(
+                alpha.workspace,
+                Some("C:/explicit-alpha".into()),
+                Some((90, 30)),
+            )
+            .unwrap();
+        let alpha_identity = first.resource_terminal_host_identity(&alpha_surface).unwrap();
+        let alpha_tab = alpha_surface.resource_identity().unwrap().tab_id.to_string();
+        let alpha_pane = first.with_state(|state| {
+            let pane = state.resource_indexes.tab_pane[&alpha_surface.id];
+            state.resource_indexes.pane_ids[&pane].to_string()
+        });
+        let alpha_second_surface =
+            first.create_terminal_tab_in_public_pane(&alpha_pane, Some((90, 30))).unwrap();
+        let beta = first.create_empty_workspace(Some("Beta".into()), None, None).unwrap();
+        let beta_surface = first
+            .open_workspace_terminal(
+                beta.workspace,
+                Some("C:/explicit-beta".into()),
+                Some((100, 32)),
+            )
+            .unwrap();
+        let beta_identity = first.resource_terminal_host_identity(&beta_surface).unwrap();
+        let before = first.workspace_registry.lock().unwrap().resource_topology_snapshot().unwrap();
+        assert_eq!(before.active_workspace.as_ref(), Some(&before.active_screens[1].0));
+        drop(alpha_surface);
+        drop(alpha_second_surface);
+        drop(beta_surface);
+        drop(first);
+
+        let reopened = Mux::from_workspace_registry(
+            session.into(),
+            SurfaceOptions::default(),
+            WorkspaceRegistry::open(&root, session).unwrap(),
+            ProviderWorkspaceState::default(),
+            true,
+        )
+        .unwrap();
+        reopened.with_state(|state| {
+            assert_eq!(
+                state
+                    .workspaces
+                    .iter()
+                    .map(|workspace| workspace.name.as_str())
+                    .collect::<Vec<_>>(),
+                ["Alpha", "Beta"]
+            );
+            assert_eq!(state.active_workspace, 1);
+            assert!(state.surfaces.is_empty());
+        });
+        let restored_alpha = reopened.open_public_terminal_tab(&alpha_tab, Some((90, 30))).unwrap();
+        let restored_beta = reopened
+            .open_workspace_terminal(
+                beta.workspace,
+                Some("C:/must-not-replay".into()),
+                Some((100, 32)),
+            )
+            .unwrap();
+        let restored_alpha_identity =
+            reopened.resource_terminal_host_identity(&restored_alpha).unwrap();
+        let restored_beta_identity =
+            reopened.resource_terminal_host_identity(&restored_beta).unwrap();
+        assert_eq!(restored_alpha_identity.terminal_id, alpha_identity.terminal_id);
+        assert_eq!(restored_beta_identity.terminal_id, beta_identity.terminal_id);
+        assert_ne!(restored_alpha_identity.incarnation, alpha_identity.incarnation);
+        assert_ne!(restored_beta_identity.incarnation, beta_identity.incarnation);
+        assert_ne!(restored_alpha.spawn_cwd().as_deref(), Some("C:/explicit-alpha"));
+        assert_ne!(restored_beta.spawn_cwd().as_deref(), Some("C:/must-not-replay"));
+        let after =
+            reopened.workspace_registry.lock().unwrap().resource_topology_snapshot().unwrap();
+        assert_eq!(after.active_workspace, before.active_workspace);
+        assert_eq!(after.active_screens, before.active_screens);
+        assert_eq!(after.screens, before.screens);
+        assert_eq!(after.panes, before.panes);
+        assert_eq!(after.tabs, before.tabs);
+        let split = reopened.split_public_pane(&alpha_pane, SplitDir::Right, None).unwrap();
+        drop(split);
+        drop(restored_alpha);
+        drop(restored_beta);
+        drop(reopened);
         std::fs::remove_dir_all(root).unwrap();
     }
 
