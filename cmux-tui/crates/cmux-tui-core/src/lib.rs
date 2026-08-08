@@ -70,7 +70,7 @@ pub use workspace_registry::{
     RegistryWorkspace, UnsupportedWorkspaceRegistrySchema, WorkspaceMutation, WorkspaceRegistry,
 };
 
-pub use cmux_remote_protocol::REMOTE_SESSION_MESSAGE_MAX_BYTES;
+pub const REMOTE_SESSION_MESSAGE_MAX_BYTES: usize = 32 * 1024 * 1024;
 pub use cmux_tui_cdp::BrowserMode;
 pub use ghostty_vt::{CursorShape, Rgb};
 

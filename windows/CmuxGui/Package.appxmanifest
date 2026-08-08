@@ -17,8 +17,8 @@
     Version="0.2.1.0" />
 
   <Properties>
-    <DisplayName>cmux</DisplayName>
-    <PublisherDisplayName>cmux</PublisherDisplayName>
+    <DisplayName>cmux for Windows</DisplayName>
+    <PublisherDisplayName>sweetcornna</PublisherDisplayName>
     <Logo>Assets\StoreLogo.png</Logo>
   </Properties>
 
@@ -34,8 +34,8 @@
   <Applications>
     <Application Id="App" Executable="CmuxGui.exe" EntryPoint="Windows.FullTrustApplication">
       <uap:VisualElements
-        DisplayName="cmux"
-        Description="A Ghostty-based terminal for Windows"
+        DisplayName="cmux for Windows"
+        Description="An independently maintained Ghostty-based terminal for Windows"
         BackgroundColor="#1B1B1D"
         Square150x150Logo="Assets\Square150x150Logo.png"
         Square44x44Logo="Assets\Square44x44Logo.png" />

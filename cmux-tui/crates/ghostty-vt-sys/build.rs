@@ -51,9 +51,7 @@ fn main() {
     // machine whose rustup host is windows-gnu needs the triple spelled out for
     // its own native build too.
     let needs_explicit_zig_target = target != host || target.ends_with("windows-gnu");
-    if needs_explicit_zig_target
-        && let Some(zig_target) = zig_target_for_rust_target(&target)
-    {
+    if needs_explicit_zig_target && let Some(zig_target) = zig_target_for_rust_target(&target) {
         command.arg(format!("-Dtarget={zig_target}"));
     }
     // Valgrind's instruction emulation doesn't cover every CPU-native SIMD

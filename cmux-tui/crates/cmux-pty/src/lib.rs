@@ -15,9 +15,6 @@ use std::sync::Arc;
 
 pub use portable_pty::{Child, ChildKiller, ExitStatus, MasterPty, PtySize};
 
-#[cfg(unix)]
-mod macos;
-
 /// Stable classification for failures at the PTY allocation boundary.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PtyOpenErrorKind {

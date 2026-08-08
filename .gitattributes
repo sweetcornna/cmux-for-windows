@@ -1,8 +1,23 @@
-Resources/markdown-viewer/diff-viewer/**/*.mjs -whitespace
+* text=auto
 
-# Resources/markdown-viewer holds vendored third-party runtime bundles (mermaid,
-# vega, highlight.js, the Pierre/Shiki diff renderer + per-language grammars and
-# WASM) plus the generated diff-viewer React app build. They are not authored
-# source, so exclude them from GitHub Linguist's language stats.
-Resources/markdown-viewer/** linguist-vendored
-Resources/markdown-viewer/diff-viewer-app/** linguist-generated
+*.sh text eol=lf
+*.rs text eol=lf
+*.toml text eol=lf
+*.yml text eol=lf
+*.yaml text eol=lf
+*.md text eol=lf
+
+*.ps1 text eol=crlf
+*.iss text eol=crlf
+*.cs text eol=crlf
+*.csproj text eol=crlf
+*.xaml text eol=crlf
+*.resw text eol=crlf
+
+*.png binary
+*.ico binary
+*.dll binary
+*.exe binary
+*.lib binary
+*.a binary
+*.wasm binary

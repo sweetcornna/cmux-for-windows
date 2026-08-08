@@ -86,7 +86,16 @@
     <value>关于</value>
   </data>
   <data name="Settings_AboutDesc" xml:space="preserve">
-    <value>终端通过 Ghostty VT 引擎运行在 ConPTY 上，与 cmux TUI 使用同一个引擎。</value>
+    <value>由 sweetcornna 独立维护的非官方 Windows 分支，不由 Manaflow 发布、认可或支持。终端通过 Ghostty VT 引擎运行在 ConPTY 上。</value>
+  </data>
+  <data name="Settings_ProjectLink" xml:space="preserve">
+    <value>项目仓库与支持</value>
+  </data>
+  <data name="Settings_LegalNotice" xml:space="preserve">
+    <value>许可证和第三方声明已随应用安装。</value>
+  </data>
+  <data name="Settings_Version" xml:space="preserve">
+    <value>版本 {0}</value>
   </data>
   <data name="Option_System" xml:space="preserve">
     <value>跟随系统</value>

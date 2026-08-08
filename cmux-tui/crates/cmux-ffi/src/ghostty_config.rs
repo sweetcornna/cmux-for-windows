@@ -154,9 +154,7 @@ fn read_theme(dir: &Path, name: &str) -> Option<String> {
 }
 
 fn find_value(text: &str, wanted: &str) -> Option<String> {
-    entries(text)
-        .find(|(key, _)| *key == wanted)
-        .map(|(_, value)| value.to_string())
+    entries(text).find(|(key, _)| *key == wanted).map(|(_, value)| value.to_string())
 }
 
 /// Yield `key = value` pairs, skipping comments and blank lines.
@@ -186,11 +184,7 @@ pub fn parse_color(value: &str) -> Option<Rgb> {
         }
         3 => {
             let expand = |c: &str| u8::from_str_radix(c, 16).ok().map(|v| v * 17);
-            Some(Rgb {
-                r: expand(&hex[0..1])?,
-                g: expand(&hex[1..2])?,
-                b: expand(&hex[2..3])?,
-            })
+            Some(Rgb { r: expand(&hex[0..1])?, g: expand(&hex[1..2])?, b: expand(&hex[2..3])? })
         }
         _ => None,
     }

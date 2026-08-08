@@ -86,7 +86,16 @@
     <value>About</value>
   </data>
   <data name="Settings_AboutDesc" xml:space="preserve">
-    <value>Terminals run on ConPTY through the Ghostty VT engine, the same engine the cmux TUI uses.</value>
+    <value>Independent Windows fork maintained by sweetcornna. Not published, endorsed, or supported by Manaflow. Terminals run on ConPTY through the Ghostty VT engine.</value>
+  </data>
+  <data name="Settings_ProjectLink" xml:space="preserve">
+    <value>Project repository and support</value>
+  </data>
+  <data name="Settings_LegalNotice" xml:space="preserve">
+    <value>License and third-party notices are installed with the application.</value>
+  </data>
+  <data name="Settings_Version" xml:space="preserve">
+    <value>Version {0}</value>
   </data>
   <data name="Option_System" xml:space="preserve">
     <value>Use system setting</value>

@@ -1,99 +1,104 @@
-# cmux-tui
+# cmux TUI for Windows
 
-`cmux-tui` is the Rust TUI multiplexer in this repository. It keeps a tree of machines, sessions, workspaces, screens, panes, tabs, terminals, and browsers. Its public CLI and SDKs expose those resources through `cmux.protocol/2`.
+`cmux-tui` is the Rust terminal-multiplexer engine, standalone text interface, and local resource CLI used by cmux for Windows. It runs real ConPTY child processes and parses terminal state with Ghostty's VT engine.
 
-## Documentation
+This directory is part of `sweetcornna`'s independent Windows fork. Unix remote-daemon, relay, cloud-machine, web frontend, and multi-language SDK publishing components are intentionally not included.
 
-- [Docs index](docs/README.md)
-- [Getting started](docs/getting-started.md)
-- [Windows](docs/windows.md)
-- [Remote daemon and clients](docs/remote.md)
-- [Remote workspace RPC contract](spec/remote-rpc.md)
-- [Concepts](docs/concepts.md)
-- [Keyboard](docs/keyboard.md)
-- [Mouse](docs/mouse.md)
-- [Configuration](docs/configuration.md)
-- [Machines and remote sessions](docs/machines.md)
-- [Public CLI](spec/cli.md)
-- [SDK contract](spec/bindings.md)
-- [Public resource protocol](spec/resource-api-v2.md)
-- [Raw control protocol](docs/protocol.md)
-- [Browser panes](docs/browser-panes.md)
+## Supported target
+
+The only supported engine target is:
+
+```text
+x86_64-pc-windows-gnu
+```
+
+There is no supported `x86_64-pc-windows-msvc` artifact.
 
 ## Build
 
-Builds need Zig 0.16.0, a Rust toolchain, and the `ghostty` submodule initialized. The `ghostty-vt-sys` crate builds `libghostty-vt.a` from the submodule with Zig before compiling the Rust crates.
+Initialize the Ghostty submodule from the repository root, then build the TUI and GUI FFI library:
 
-```bash
-cd cmux-tui
-cargo build -p cmux-tui
+```powershell
+git submodule update --init --depth 1 ghostty
+rustup target add x86_64-pc-windows-gnu
+cargo build --manifest-path .\cmux-tui\Cargo.toml `
+  -p cmux-tui -p cmux-ffi `
+  --target x86_64-pc-windows-gnu `
+  --locked
 ```
 
-Windows targets `x86_64-pc-windows-gnu` and needs mingw-w64 GCC and libclang on top of that. See [Windows](docs/windows.md) for the build, the support matrix, and two linker/bindgen pitfalls worth reading before you start.
+The build requires Rust 1.91 or newer, Zig 0.16.0, MinGW-w64, and libclang. See [Development](../docs/DEVELOPMENT.md) for setup and linker details.
 
 ## Run
 
-`machine-agent` and the remote daemon commands are available only on Unix platforms; on Windows they are compiled out and exit with a message.
-
-```bash
-cd cmux-tui
-cargo run -p cmux-tui
-cargo run -p cmux-tui -- --session agents
-cargo run -p cmux-tui -- --headless --session agents
-cargo run -p cmux-tui -- attach --session agents
-cargo run -p cmux-tui -- attach --session agents --terminal <terminal-id>
-cargo run -p cmux-tui -- machine-agent --session agents
+```powershell
+.\cmux-tui\target\x86_64-pc-windows-gnu\debug\cmux-tui.exe
+.\cmux-tui\target\x86_64-pc-windows-gnu\debug\cmux-tui.exe --session agents
+.\cmux-tui\target\x86_64-pc-windows-gnu\debug\cmux-tui.exe --headless --session agents
 ```
 
-The default session is `main`. Default sockets live at `$TMPDIR/cmux-tui-<uid>/<session>.sock`; use `--socket <path>` for an explicit path. Detach from an attached TUI with prefix `d`, which is `Ctrl-b d` by default.
+The default session is `main`. Detach from an attached TUI with the configured prefix followed by `d`; the default is `Ctrl-b d`.
 
-`attach --terminal <id>` attaches one PTY terminal by its stable ID from `cmux terminal list`. It uses the full host terminal without the sidebar, status bar, pane border, or other tabs.
+The shell search order is `pwsh.exe`, `powershell.exe`, then `cmd.exe`.
 
-Pane layout stays tiled by default. Press `Ctrl-b g` to append a terminal to the right at two-thirds of the viewport width. The existing layout keeps its width, so a continuous horizontal scrollbar appears in the status bar. Focusing a pane reveals it with an animated viewport movement. `Alt-n` reapplies Zellij's automatic layout inside the focused horizontal column. `Ctrl-b U` undoes the latest structural layout action on the focused screen; undoing pane creation asks for confirmation before closing the pane.
+## Local resource CLI
 
-The public control CLI is noun-first:
+The noun-first CLI controls a local session over its Windows AF_UNIX socket:
 
-```bash
-cmux workspace create --name api
-cmux workspace current run -- cargo test
-cmux terminal term_0123456789abcdef0123456789abcdef screen read
-cmux session current events --jsonl
+```powershell
+cmux-tui.exe --session agents workspace create --name api
+cmux-tui.exe --session agents workspace list
+cmux-tui.exe --session agents terminal list
+cmux-tui.exe --session agents terminal <terminal-id> screen read
 ```
 
-Resource IDs are opaque typed strings. Selectors also accept `current` or an exact name. Duplicate names return `selector.ambiguous` with every candidate ID; use an ID to choose one. Prefix a reserved or ID-shaped name with `name:`.
+Resource IDs are opaque typed strings. Selectors can also use `current` or an exact name. Duplicate names return an ambiguity error; use the stable ID to disambiguate.
 
-Packaged builds can run as `npx cmux`. The optional machine rail lets that local client switch among the current session, other Unix sockets, and sessions reached through SSH. It is disabled by default and activates when `machine_sidebar.enabled` is true or `machines` contains a valid entry in `cmux-tui.json`. `npx cmux --cloud` composes those local targets with the Cloud catalog and enables temporary machine connections without sending local SSH details to Cloud. The client uses noninteractive SSH with strict host-key checking and the remote `cmux relay --session <name>` transport primitive, so the remote headless session, trusted host key, authentication key, and binary must already exist. See [Machines and remote sessions](docs/machines.md).
+Remote commands such as `connect`, `ssh`, `forward`, `rpc`, and `enroll` are unavailable in this Windows-only fork.
 
-```bash
-npx cmux
-npx cmux machine-agent --session agents
-ssh -T dev@buildbox cmux relay --session agents
+## Paths
+
+| Purpose | Default |
+| --- | --- |
+| Session state | `%LOCALAPPDATA%\cmux-tui\sessions` |
+| Configuration | `%APPDATA%\cmux\cmux-tui.json` |
+| Control sockets | `%TEMP%\cmux-tui-<user>\<session>.sock` |
+| Browser profile | `%LOCALAPPDATA%\cmux-tui\chrome-profile` |
+
+Use `CMUX_TUI_STATE_DIR` to override the state root and `CMUX_TUI_CONFIG` to override the configuration file.
+
+## Persistence
+
+The core persists workspace, split, pane, tab, and active-workspace topology. It does not preserve ConPTY process state, terminal output, scrollback, commands, or working directories. Restored logical terminals start fresh default shells.
+
+## Test
+
+```powershell
+cargo fmt --manifest-path .\cmux-tui\Cargo.toml --all -- --check
+cargo test --manifest-path .\cmux-tui\Cargo.toml `
+  -p cmux-tui-core --lib `
+  --target x86_64-pc-windows-gnu `
+  --locked `
+  workspace_registry::tests::
+cargo test --manifest-path .\cmux-tui\Cargo.toml `
+  -p cmux-tui-core --lib `
+  --target x86_64-pc-windows-gnu `
+  --locked `
+  persistent_gui_restart_restores_workspaces_with_fresh_default_shells
 ```
 
-The Unix-only `machine-agent` shares an existing local session through one outbound SSH registration with cmux.cloud. It prints a one-time pairing code and opens no listener. The final command carries raw JSON-lines protocol traffic and is normally started by the machine connector, not used as an interactive TUI.
+The entire inherited test suite is not Windows-portable; some retained tests still assume `/bin/sh` and `/tmp`.
 
-Use `--term <value>` to set `TERM` for child PTYs. Without it, children get `xterm-256color`; `CMUX_TUI_TERM` can override the terminal runtime default, with `CMUX_MUX_TERM` retained as a legacy fallback.
+## Crates retained in this fork
 
-## Browser Realism
+| Crate | Role |
+| --- | --- |
+| `cmux-ffi` | C ABI for the WinUI frontend |
+| `cmux-tui` | Standalone TUI and local CLI |
+| `cmux-tui-core` | Resource model, control socket, persistence, and terminal lifecycle |
+| `cmux-pty` | PTY abstraction and ConPTY backend |
+| `cmux-tui-cdp` | Experimental browser-pane transport |
+| `ghostty-vt` / `ghostty-vt-sys` | Ghostty terminal parser bindings and build integration |
+| `cmux-tui-machine-protocol` | Shared machine-list protocol types still required by the Windows TUI build |
 
-By default, browser panes launch your real Google Chrome or another Chrome-family binary in `browser.mode: "headful"` with a visible window and a persistent per-session profile. Log into Google or other sites once in that visible window; cookies and logins persist across sessions. Set `browser.mode: "headless"` to hide the launched Chrome window. Both modes keep the anti-throttle flags, `--disable-blink-features=AutomationControlled`, the persistent `--user-data-dir`, and `about:blank` startup.
-
-Chrome 136 and newer reject CDP remote debugging on the OS-default profile directory, and a running normal Chrome owns its profile `SingletonLock`. Use the mux profile, set `browser.user_data_dir` to a copy or a dedicated directory after quitting normal Chrome, or attach to a Chrome you started with `--remote-debugging-port`.
-
-To attach instead of launching, set `browser.cdp_url`, `CMUX_MUX_CDP_URL`, or enable discovery. Agent Browser works the same way: run `agent-browser get cdp-url` and use the returned `ws://` URL. This build supports `ws://` and `http://` CDP endpoints; `wss://` is not supported.
-
-## Development
-
-```bash
-cd cmux-tui
-cargo test
-```
-
-The smoke scripts expect a built `cmux-tui` binary unless `CMUX_TUI_BIN` is set.
-
-```bash
-cd cmux-tui
-cargo build -p cmux-tui
-python3 scripts/smoke-tui.py
-python3 scripts/smoke-attach.py
-```
+For architecture and persistence details, see [Architecture](../docs/ARCHITECTURE.md).

@@ -1,210 +1,55 @@
-# Third-Party Licenses
+# Third-party notices
 
-cmux includes the following third-party software:
+cmux for Windows is derived from upstream cmux and uses third-party source and binary dependencies. The repository license and upstream copyright notice are in [LICENSE](LICENSE). Package manifests and lockfiles are authoritative for the exact dependency versions in a build.
 
----
+This file identifies source copied into or built directly from this repository. It does not replace license files distributed with dependency packages.
+
+## Project license scopes
+
+The root [LICENSE](LICENSE) states the repository's default GPL-3.0-or-later terms where no other file or notice applies. The retained Rust workspace manifests inherit `license = "MIT"` from `cmux-tui/Cargo.toml`. This file records that inherited metadata but does not establish a new license grant or resolve ownership by assumption; source history and file-level notices remain authoritative.
 
 ## Ghostty
 
-- **License:** MIT License
-- **Copyright:** Copyright (c) 2024 Mitchell Hashimoto, Ghostty contributors
-- **Source:** https://github.com/ghostty-org/ghostty
+The terminal parser is built from the `ghostty` submodule.
 
-Permission is hereby granted, free of charge, to any person obtaining a copy
-of this software and associated documentation files (the "Software"), to deal
-in the Software without restriction, including without limitation the rights
-to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
-copies of the Software, and to permit persons to whom the Software is
-furnished to do so, subject to the following conditions:
+- Project: Ghostty
+- Upstream source: <https://github.com/ghostty-org/ghostty>
+- Repository source: <https://github.com/manaflow-ai/ghostty>
+- License: MIT
+- Copyright: Copyright (c) 2024 Mitchell Hashimoto and Ghostty contributors
+- Full text in source: `ghostty/LICENSE`
+- Full text in an installed build: `licenses/Ghostty-MIT.txt`
 
-The above copyright notice and this permission notice shall be included in all
-copies or substantial portions of the Software.
+## Crossterm
 
-THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
-SOFTWARE.
+The repository carries a patched Crossterm source tree under `cmux-tui/vendor/crossterm` so shifted keys, base-layout keys, and associated text survive the input adapter.
 
----
+- Project: Crossterm
+- Source: <https://github.com/crossterm-rs/crossterm>
+- License: MIT
+- Copyright: Copyright (c) 2019 Timon
+- Full text in source: `cmux-tui/vendor/crossterm/LICENSE`
+- Full text in an installed build: `licenses/Crossterm-MIT.txt`
 
-## Bonsplit
+## terminput-crossterm
 
-- **License:** MIT License
-- **Copyright:** Copyright (c) 2026 Alasdair Monk
-- **Source:** https://github.com/almonk/bonsplit
+The repository carries a patched `terminput-crossterm` adapter under `cmux-tui/vendor/terminput-crossterm` to map the extended Crossterm event shape.
 
-Permission is hereby granted, free of charge, to any person obtaining a copy
-of this software and associated documentation files (the "Software"), to deal
-in the Software without restriction, including without limitation the rights
-to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
-copies of the Software, and to permit persons to whom the Software is
-furnished to do so, subject to the following conditions:
+- Project: terminput
+- Source: <https://github.com/aschey/terminput>
+- License: MIT OR Apache-2.0
+- Copyright: Austin Schey and contributors
+- Full texts in source: `cmux-tui/vendor/terminput-crossterm/LICENSE-MIT` and `cmux-tui/vendor/terminput-crossterm/LICENSE-APACHE`
+- Full texts in an installed build: `licenses/terminput-crossterm-MIT.txt` and `licenses/terminput-crossterm-Apache-2.0.txt`
 
-The above copyright notice and this permission notice shall be included in all
-copies or substantial portions of the Software.
+## Bundled themes and icons
 
-THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
-SOFTWARE.
+The Windows frontend includes Ghostty-format theme files and cmux application icons under `windows/CmuxGui/Assets`. These assets entered this fork with the native Windows frontend. Their names identify visual schemes but do not, by themselves, establish authorship or license terms. Before publishing a release with a newly added or replaced asset, record whether it is original, inherited from upstream cmux or Ghostty, or imported from another project, and include any required attribution and redistribution terms.
 
-## Sparkle
+## Rust and .NET dependencies
 
-- **License:** MIT License
-- **Copyright:** Copyright (c) 2006-2013 Andy Matuschak, 2009-2013 Elgato Systems GmbH, 2011-2014 Kornel Lesinski, 2015-2017 Sparkle Project
-- **Source:** https://github.com/sparkle-project/Sparkle
+Rust dependencies are declared in `cmux-tui/Cargo.toml` and locked in `cmux-tui/Cargo.lock`. .NET dependencies are declared in `windows/CmuxGui/CmuxGui.csproj` and restored by NuGet. Their authors retain all applicable rights, and each dependency remains subject to its own license.
 
-Permission is hereby granted, free of charge, to any person obtaining a copy
-of this software and associated documentation files (the "Software"), to deal
-in the Software without restriction, including without limitation the rights
-to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
-copies of the Software, and to permit persons to whom the Software is
-furnished to do so, subject to the following conditions:
+The installer includes [LICENSE](LICENSE), this notice, and the full license texts for the directly vendored Ghostty, Crossterm, and terminput-crossterm source. Before each public release, the maintainer must also audit the resolved Rust graph, self-contained .NET runtime, Windows App SDK, Win2D, copied publish payload, themes, and icons for additional notice or source-distribution requirements. A generated dependency report or software bill of materials can support that audit but does not replace required license text.
 
-The above copyright notice and this permission notice shall be included in all
-copies or substantial portions of the Software.
-
-THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
-SOFTWARE.
-
-## PostHog iOS
-
-- **License:** MIT License
-- **Copyright:** Copyright (c) 2020 PostHog
-- **Source:** https://github.com/PostHog/posthog-ios
-
-Permission is hereby granted, free of charge, to any person obtaining a copy
-of this software and associated documentation files (the "Software"), to deal
-in the Software without restriction, including without limitation the rights
-to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
-copies of the Software, and to permit persons to whom the Software is
-furnished to do so, subject to the following conditions:
-
-The above copyright notice and this permission notice shall be included in all
-copies or substantial portions of the Software.
-
-THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
-SOFTWARE.
-
----
-
-## Sentry Cocoa
-
-- **License:** MIT License
-- **Copyright:** Copyright (c) 2015 Sentry
-- **Source:** https://github.com/getsentry/sentry-cocoa
-
-Permission is hereby granted, free of charge, to any person obtaining a copy
-of this software and associated documentation files (the "Software"), to deal
-in the Software without restriction, including without limitation the rights
-to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
-copies of the Software, and to permit persons to whom the Software is
-furnished to do so, subject to the following conditions:
-
-The above copyright notice and this permission notice shall be included in all
-copies or substantial portions of the Software.
-
-THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
-SOFTWARE.
-
----
-
-## Markdown Viewer Web Assets
-
-cmux bundles these files under `Resources/markdown-viewer/` so the markdown
-viewer has no runtime CDN dependency.
-
-### marked
-
-- **Version:** 13.0.3
-- **License:** MIT License
-- **Copyright:** Copyright (c) 2011-2024, Christopher Jeffrey
-- **Source:** https://github.com/markedjs/marked/releases/tag/v13.0.3
-
-### highlight.js
-
-- **Version:** 11.10.0
-- **License:** BSD 3-Clause License
-- **Copyright:** Copyright (c) 2006-2024 Josh Goebel and other contributors
-- **Source:** https://github.com/highlightjs/highlight.js/releases/tag/11.10.0
-
-### github-markdown-css
-
-- **Version:** 5.6.1
-- **License:** MIT License
-- **Copyright:** Copyright (c) Sindre Sorhus
-- **Source:** https://github.com/sindresorhus/github-markdown-css/tree/v5.6.1
-
-### Mermaid
-
-- **Version:** 11.4.1
-- **License:** MIT License
-- **Copyright:** Copyright (c) 2014-2024 Knut Sveidqvist and Mermaid contributors
-- **Source:** https://github.com/mermaid-js/mermaid/releases/tag/mermaid%4011.4.1
-
-### Vega
-
-- **Version:** 5.30.0
-- **License:** BSD 3-Clause License
-- **Copyright:** Copyright (c) 2015-2024 University of Washington Interactive Data Lab and contributors
-- **Source:** https://github.com/vega/vega/releases/tag/v5.30.0
-
-### Vega-Lite
-
-- **Version:** 5.21.0
-- **License:** BSD 3-Clause License
-- **Copyright:** Copyright (c) 2015-2024 University of Washington Interactive Data Lab and contributors
-- **Source:** https://github.com/vega/vega-lite/releases/tag/v5.21.0
-
-### Vega-Embed
-
-- **Version:** 6.26.0
-- **License:** BSD 3-Clause License
-- **Copyright:** Copyright (c) 2015-2024 University of Washington Interactive Data Lab and contributors
-- **Source:** https://github.com/vega/vega-embed/releases/tag/v6.26.0
-
-BSD 3-Clause License:
-
-Redistribution and use in source and binary forms, with or without
-modification, are permitted provided that the following conditions are met:
-
-1. Redistributions of source code must retain the above copyright notice, this
-   list of conditions and the following disclaimer.
-2. Redistributions in binary form must reproduce the above copyright notice,
-   this list of conditions and the following disclaimer in the documentation
-   and/or other materials provided with the distribution.
-3. Neither the name of the copyright holder nor the names of its contributors
-   may be used to endorse or promote products derived from this software
-   without specific prior written permission.
-
-THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS" AND
-ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED
-WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
-DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE FOR
-ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES
-(INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES;
-LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON
-ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
-(INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
-SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+A maintainer adding a vendored source tree, bundled asset, or binary dependency must add its required attribution and license text before publishing a release.

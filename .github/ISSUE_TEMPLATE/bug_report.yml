@@ -1,37 +1,45 @@
-name: Bug Report
-description: Report a bug in cmux
+name: Bug report
+description: Report a reproducible problem in cmux for Windows
+title: "[Bug]: "
 labels: ["bug"]
 body:
   - type: markdown
     attributes:
       value: |
-        Thanks for reporting a bug! Please fill out the information below so we can reproduce and fix it.
+        This repository is the independently maintained Windows fork. Do not use this form for the upstream macOS application. Remove secrets and terminal contents from logs before submitting them.
 
   - type: input
-    id: cmux-version
+    id: version
     attributes:
-      label: cmux version
-      description: "Run `cmux --version` or check About cmux in the menu bar."
-      placeholder: "e.g. 0.3.2"
+      label: cmux for Windows version
+      description: Use the installed version or the commit hash for a source build.
+      placeholder: "0.2.1 or commit 0123456"
     validations:
       required: true
 
   - type: input
-    id: macos-version
+    id: windows-version
     attributes:
-      label: macOS version
-      description: "Apple menu → About This Mac"
-      placeholder: "e.g. macOS 15.3 (Sequoia)"
+      label: Windows version
+      description: Run `winver` and include the edition, version, and OS build.
+      placeholder: "Windows 11 24H2, OS build 26100.x"
     validations:
       required: true
 
   - type: dropdown
-    id: chip
+    id: component
     attributes:
-      label: Mac chip
+      label: Affected component
       options:
-        - Apple Silicon (M1/M2/M3/M4)
-        - Intel
+        - Native WinUI GUI
+        - Terminal rendering or input
+        - Workspace, split, or tab persistence
+        - Standalone TUI or resource CLI
+        - Installer, upgrade, or uninstall
+        - Explorer integration
+        - Settings, themes, or localization
+        - Experimental browser pane
+        - Build from source
     validations:
       required: true
 
@@ -40,30 +48,36 @@ body:
     attributes:
       label: Installation method
       options:
-        - Homebrew
-        - Direct download (DMG)
-        - Built from source
+        - Per-user Setup executable
+        - Development MSIX
+        - Unpackaged source build
+        - Standalone TUI binary
     validations:
       required: true
 
-  - type: dropdown
-    id: nightly-repro
+  - type: input
+    id: shell
     attributes:
-      label: Can you reproduce this on cmux NIGHTLY?
-      description: "Please test with the latest NIGHTLY build first: https://github.com/manaflow-ai/cmux?tab=readme-ov-file#nightly-builds"
-      options:
-        - Yes, it still reproduces on NIGHTLY
-        - No, it does not reproduce on NIGHTLY
-        - I could not test NIGHTLY
-    validations:
-      required: true
+      label: Shell
+      description: Include the executable and version when the issue involves a terminal.
+      placeholder: "PowerShell 7.5 (pwsh.exe)"
 
   - type: textarea
     id: description
     attributes:
-      label: Bug description
-      description: "A clear description of the bug."
-      placeholder: "What happened?"
+      label: What happened?
+      description: Describe the observed behavior and its impact.
+    validations:
+      required: true
+
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Steps to reproduce
+      placeholder: |
+        1. Start cmux.
+        2. Create ...
+        3. Observe ...
     validations:
       required: true
 
@@ -71,54 +85,26 @@ body:
     id: expected
     attributes:
       label: Expected behavior
-      description: "What did you expect to happen?"
     validations:
       required: true
 
   - type: textarea
-    id: steps
+    id: diagnostics
     attributes:
-      label: Steps to reproduce
-      description: "Minimal steps to reproduce the bug."
-      placeholder: |
-        1. Open cmux
-        2. ...
-        3. See error
-    validations:
-      required: true
-
-  - type: textarea
-    id: shell-info
-    attributes:
-      label: Shell and environment
-      description: "Which shell are you using? Any relevant env config (oh-my-zsh, starship, tmux, etc.)?"
-      placeholder: "e.g. zsh with starship prompt, using tmux inside cmux"
-    validations:
-      required: false
-
-  - type: textarea
-    id: logs
-    attributes:
-      label: Relevant logs or crash reports
-      description: |
-        If applicable, paste logs or crash reports. Crash reports are in `~/Library/Logs/DiagnosticReports/`.
-        You can also check `Console.app` for cmux-related messages.
+      label: Sanitized diagnostics
+      description: Review `%LOCALAPPDATA%\cmux-gui.log` and remove local paths, personal data, credentials, and terminal content before pasting relevant lines.
       render: text
-    validations:
-      required: false
-
-  - type: textarea
-    id: screenshots
-    attributes:
-      label: Screenshots or screen recordings
-      description: "If applicable, add screenshots or recordings to help explain the problem."
-    validations:
-      required: false
 
   - type: textarea
     id: additional
     attributes:
       label: Additional context
-      description: "Anything else that might be relevant (other apps running, display setup, accessibility features, etc.)."
-    validations:
-      required: false
+      description: Add screenshots, recordings, display scaling, input method, or other relevant details.
+
+  - type: checkboxes
+    id: scope
+    attributes:
+      label: Fork scope confirmation
+      options:
+        - label: I confirmed this report affects the Windows fork rather than only the upstream macOS project.
+          required: true

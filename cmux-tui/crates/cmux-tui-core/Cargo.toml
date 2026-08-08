@@ -14,7 +14,6 @@ workspace = true
 ghostty-vt.workspace = true
 cmux-tui-cdp.workspace = true
 cmux-pty.workspace = true
-cmux-remote-protocol.workspace = true
 portable-pty.workspace = true
 serde.workspace = true
 serde_json.workspace = true

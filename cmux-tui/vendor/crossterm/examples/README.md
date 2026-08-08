@@ -29,7 +29,7 @@ To run the interactive-demo go into the folder `examples/interactive-demo` and r
 
 ## License
 
-This project is licensed under the MIT License - see the [LICENSE.md](LICENSE) file for details.
+This project is licensed under the MIT License - see the [LICENSE](../LICENSE) file for details.
 
 [s2]: https://img.shields.io/badge/license-MIT-blue.svg
 [l2]: LICENSE

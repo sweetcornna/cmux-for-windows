@@ -1,75 +1,42 @@
-# Xcode
-.build/
-build/
-DerivedData/
-*.xcuserstate
-xcuserdata/
-*.xcworkspace/xcshareddata/
+# Rust
+/target/
+cmux-tui/target/
 
-# macOS
-.DS_Store
+# .NET and Visual Studio
+**/bin/
+**/obj/
+.vs/
+*.user
+*.suo
 
-# Local env
-.env
-.envrc
-!web/.envrc
-ios/Config/AppStoreConnect.local.plist
-
-# Swift Package Manager
-.swiftpm/
-.ci-source-packages/
-
-# GhosttyKit binary (built from ghostty submodule via scripts/setup.sh)
-GhosttyKit.xcframework
-GhosttyKit.xcframework.bak-*/
-
-# Release artifacts
-cmux-*.zip
-cmux-macos.dmg
-appcast.xml
-
-# Python
-__pycache__/
-*.pyc
-*.pyo
-.pytest_cache/
-.hypothesis/
-.vercel
+# Windows packages and installer output
+windows/dist/
+windows/AppPackages/
+*.appx
+*.appxbundle
+*.appinstaller
+*.msix
+*.msixbundle
+windows/signing/*.cer
+*.pfx
 
 # Zig
 .zig-cache/
 zig-out/
 
-# Node
-node_modules/
-.next/
+# Editors
+.vscode/
+.idea/
+*.swp
+*~
 
-# Test outputs
-tests/visual_output/
-tests/visual_report.html
-experiments/*/target/
+# Local environment and diagnostics
+.env
+.env.*
+!.env.example
+*.log
 
-# Stale pre-rebrand Rust TUI dir (renamed to cmux-tui/; old checkouts may
-# still have an untracked mux/target that must never be committed again)
-/mux/
-
-# Generated docs search index
-web/.pagefind-site/
-web/public/pagefind/
-
-# Local scratch (screenshots, etc.)
-tmp/
-tmp-*/
-.iter-logs/
-.claude/worktrees/
-.claude/scheduled_tasks.lock
-
-# Local dogfood scratch (screenshots, recordings) — never commit
-artifacts/
-!Packages/Shared/CmuxAgentChat/Sources/CmuxAgentChat/Artifacts/
-!Packages/Shared/CmuxAgentChat/Sources/CmuxAgentChat/Artifacts/*.swift
-!Packages/iOS/CmuxAgentChatUI/Sources/CmuxAgentChatUI/Artifacts/
-!Packages/iOS/CmuxAgentChatUI/Sources/CmuxAgentChatUI/Artifacts/*.swift
-
-# tmux verbose debug logs (tmux -v) that land in the cwd
-tmux-*.log
+# Operating systems
+.DS_Store
+Thumbs.db
+Desktop.ini

@@ -15,22 +15,11 @@ mod keys;
 mod layout_undo;
 mod localization;
 mod machine;
-#[cfg(unix)]
-mod machine_agent;
 mod machine_provider_client;
-#[cfg(unix)]
-mod machine_provider_runtime;
 mod machine_runtime;
 mod plugin_manager;
 mod process_diagnostics;
-#[cfg(target_os = "linux")]
-mod provider_authority;
-#[cfg(unix)]
-mod provider_notice_identity;
 mod pty_input;
-#[cfg(unix)]
-mod remote_cli;
-#[cfg(not(unix))]
 mod remote_cli {
     const REMOTE_COMMANDS: &[&str] = &[
         "connect",
@@ -58,8 +47,6 @@ mod remote_cli {
         1
     }
 }
-#[cfg(unix)]
-mod remote_runtime;
 mod session;
 mod sidebar_files;
 mod ui;

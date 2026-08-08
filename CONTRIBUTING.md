@@ -1,142 +1,61 @@
-# Contributing to cmux
+# Contributing to cmux for Windows
 
-## Prerequisites
+Thank you for contributing to this independent Windows fork. This repository is maintained by `sweetcornna` and is not an official Manaflow support channel.
 
-- macOS 14+
-- Xcode 15+
-- [Zig](https://ziglang.org/) (install via `brew install zig`)
+## Scope
 
-## Getting Started
+Changes should support the native Windows GUI, the Windows-compatible Rust engine, the standalone Windows TUI, or their documentation and release tooling. macOS, iOS, web, cloud-machine, Unix remote-daemon, and Homebrew functionality are intentionally outside this repository's scope.
 
-1. Clone the repository with submodules:
-   ```bash
-   git clone --recursive https://github.com/manaflow-ai/cmux.git
-   cd cmux
-   ```
+Before starting a large feature, open an issue describing the user problem and the proposed Windows behavior. Bug fixes and focused documentation corrections can be submitted directly.
 
-2. Run the setup script:
-   ```bash
-   ./scripts/setup.sh
-   ```
+## Set up
 
-   This will:
-   - Initialize git submodules (ghostty, homebrew-cmux)
-   - Build the GhosttyKit.xcframework from source
-   - Create the necessary symlinks
+1. Use 64-bit Windows 10 version 2004 or newer.
+2. Clone the repository with submodules.
+3. Install the Rust, Zig, LLVM/Clang, MinGW-w64, and .NET 8 prerequisites listed in [Development](docs/DEVELOPMENT.md).
+4. Build the Rust engine before building the WinUI application.
 
-3. Build the debug app:
-   ```bash
-   ./scripts/reload.sh --tag my-feature
-   ```
-   The script prints the `.app` path. Cmd-click to open, or pass `--launch` to open automatically.
-
-## Development Scripts
-
-| Script | Description |
-|--------|-------------|
-| `./scripts/setup.sh` | One-time setup (submodules + xcframework) |
-| `./scripts/reload.sh` | Build Debug app (pass `--launch` to also open it) |
-| `./scripts/reloadp.sh` | Build and launch Release app |
-| `./scripts/reload2.sh` | Reload both Debug and Release |
-| `./scripts/rebuild.sh` | Clean rebuild |
-
-## Team dogfood setup
-
-DEBUG builds can auto-sign-in as you and auto-attach an iOS build to your Mac with no manual steps. Each developer does a one-time setup with their own Stack account.
-
-Run this once:
-
-```bash
-scripts/setup-team-dev.sh
+```powershell
+git clone --recurse-submodules https://github.com/sweetcornna/cmux-for-windows.git
+Set-Location cmux-for-windows
+rustup target add x86_64-pc-windows-gnu
+cargo build --manifest-path .\cmux-tui\Cargo.toml -p cmux-ffi --target x86_64-pc-windows-gnu --locked
+dotnet build .\windows\CmuxGui\CmuxGui.csproj -c Debug -r win-x64
 ```
 
-It prompts for your Stack email and password (the password is never echoed), verifies them against Stack, and writes `~/.secrets/cmuxterm-dev.env` with `chmod 600`. Re-running it is safe; if you are already configured it prints the account and exits. To reset, delete `~/.secrets/cmuxterm-dev.env` and run it again.
+## Development rules
 
-After that, every dev build signs you in automatically:
+- Keep platform decisions in `cmux-tui-core::platform` rather than scattering conditional compilation through call sites.
+- Never open a directory with `File::open` to synchronize it on Windows; use `platform::sync_directory()`.
+- Drop open files, registries, and native handles before deleting their paths.
+- Keep the engine on the `x86_64-pc-windows-gnu` ABI. Do not introduce an MSVC engine artifact with the same name.
+- Treat the Rust core as the source of truth for workspace topology. The WinUI frontend must not maintain a second topology database.
+- Never log terminal key input, pasted text, tokens, passwords, or shell contents.
+- Update user documentation and `CHANGELOG.md` when behavior, requirements, file locations, or release steps change.
+- Do not commit `bin`, `obj`, `target`, `windows/dist`, private certificates, or generated installer payloads.
 
-```bash
-scripts/dev-setup.sh --tag <your-initials>
+## Tests
+
+Run the focused Windows checks before opening a pull request:
+
+```powershell
+cargo fmt --manifest-path .\cmux-tui\Cargo.toml --all -- --check
+cargo build --manifest-path .\cmux-tui\Cargo.toml -p cmux-tui -p cmux-ffi --target x86_64-pc-windows-gnu --locked
+cargo test --manifest-path .\cmux-tui\Cargo.toml -p cmux-tui-core --lib --target x86_64-pc-windows-gnu --locked workspace_registry::tests::
+cargo test --manifest-path .\cmux-tui\Cargo.toml -p cmux-tui-core --lib --target x86_64-pc-windows-gnu --locked persistent_gui_restart_restores_workspaces_with_fresh_default_shells
+dotnet build .\windows\CmuxGui\CmuxGui.csproj -c Debug -r win-x64
 ```
 
-That builds the tagged macOS DEBUG app auto-signed-in as you, enables the iOS pairing host, mints an attach ticket, and launches the iOS dev build auto-attached to your Mac. Use `--surface mac` for macOS only. See `scripts/dev-setup.sh --help` for all flags.
+For GUI changes, also verify keyboard and mouse input, pane focus, split/tab operations, settings persistence, app restart behavior, and the affected English and Simplified Chinese strings.
 
-This is DEBUG-only and per-user. The credentials file lives outside the repo and is never committed; `scripts/cmuxterm-dev.env.example` is the in-repo template. Release builds never read these credentials (the auto-sign-in path is compiled out of release).
+## Pull requests
 
-## Web and JS Tooling
+Keep pull requests focused. Include:
 
-Run Biome from the repository root with:
+- the user-visible problem and resulting behavior;
+- the exact commands used for verification;
+- screenshots or a short recording for visible GUI changes;
+- documentation and changelog updates when applicable;
+- any known limitation that remains.
 
-```bash
-bun run biome:check
-```
-
-The root `biome.json` intentionally scopes `biome check .` to maintained web and JS/TS sources.
-It excludes generated bundles, build outputs, vendored trees, and review-tool metadata such as
-`.greptile/`.
-Biome formatting and import sorting are disabled for now; do not wire this into required CI until
-the remaining source lint diagnostics are paid down.
-
-## Rebuilding GhosttyKit
-
-If you make changes to the ghostty submodule, rebuild the xcframework:
-
-```bash
-cd ghostty
-zig build -Demit-xcframework=true -Doptimize=ReleaseFast
-```
-
-## Running Tests
-
-### Basic tests (run on VM)
-
-```bash
-ssh cmux-vm 'cd /Users/cmux/cmux && xcodebuild -project cmux.xcodeproj -scheme cmux -configuration Debug -destination "platform=macOS" build && pkill -x "cmux DEV" || true && APP=$(find /Users/cmux/Library/Developer/Xcode/DerivedData -path "*/Build/Products/Debug/cmux DEV.app" -print -quit) && open "$APP" && for i in {1..20}; do [ -S /tmp/cmux.sock ] && break; sleep 0.5; done && python3 tests_v2/test_update_timing.py && python3 tests_v2/test_signals_auto.py && python3 tests_v2/test_ctrl_socket.py && python3 tests_v2/test_notifications.py'
-```
-
-### UI tests (run on VM)
-
-```bash
-ssh cmux-vm 'cd /Users/cmux/cmux && xcodebuild -project cmux.xcodeproj -scheme cmux -configuration Debug -destination "platform=macOS" -only-testing:cmuxUITests test'
-```
-
-## Ghostty Submodule
-
-The `ghostty` submodule points to [manaflow-ai/ghostty](https://github.com/manaflow-ai/ghostty), a fork of the upstream Ghostty project.
-
-### Making changes to ghostty
-
-```bash
-cd ghostty
-git checkout -b my-feature
-# make changes
-git add .
-git commit -m "Description of changes"
-git push manaflow my-feature
-```
-
-### Keeping the fork updated
-
-```bash
-cd ghostty
-git fetch origin
-git checkout main
-git merge origin/main
-git push manaflow main
-```
-
-Then update the parent repo:
-
-```bash
-cd ..
-git add ghostty
-git commit -m "Update ghostty submodule"
-```
-
-See `docs/ghostty-fork.md` for details on fork changes and conflict notes.
-
-## License
-
-By contributing to this repository, you agree that:
-
-1. Your contributions are licensed under the project's GNU General Public License v3.0 or later (`GPL-3.0-or-later`).
-2. You grant Manaflow, Inc. a perpetual, worldwide, non-exclusive, royalty-free, irrevocable license to use, reproduce, modify, sublicense, and distribute your contributions under any license, including a commercial license offered to third parties.
+Contributions follow the license already applicable to the path being changed. The root [LICENSE](LICENSE) is the default statement; Rust workspace manifests retain an inherited MIT declaration, and third-party code remains under its original license. Do not remove notices or assume that a contribution can relicense existing code. Raise unclear scope in an issue before making a license-only change.

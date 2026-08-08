@@ -59,6 +59,8 @@ public sealed partial class SettingsPage : Page
         LanguageDesc.Text = S("Settings_LanguageDesc");
         AboutHeader.Text = S("Settings_About");
         AboutDesc.Text = S("Settings_AboutDesc");
+        ProjectLinkButton.Content = S("Settings_ProjectLink");
+        LegalNoticeText.Text = S("Settings_LegalNotice");
 
         OpacitySlider.Header = S("Settings_Opacity");
         BlurSlider.Header = S("Settings_Blur");
@@ -78,7 +80,9 @@ public sealed partial class SettingsPage : Page
         ClearAppImageButton.Content = S("Settings_Clear");
 
         var version = Assembly.GetExecutingAssembly().GetName().Version;
-        VersionText.Text = version is null ? string.Empty : $"Version {version.ToString(3)}";
+        VersionText.Text = version is null
+            ? string.Empty
+            : string.Format(S("Settings_Version"), version.ToString(3));
     }
 
     private void Populate()

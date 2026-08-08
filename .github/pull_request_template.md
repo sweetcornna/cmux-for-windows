@@ -1,33 +1,26 @@
 ## Summary
 
-- What changed?
-- Why?
+- What Windows problem does this solve?
+- What changed for users?
 
-## Testing
+## Verification
 
-- How did you test this change?
-- What did you verify manually?
-
-## Demo Video
-
-For UI or behavior changes, include a short demo video (GitHub upload, Loom, or other direct link).
-
-- Video URL or attachment:
-
-## Review Trigger (Copy/Paste as PR comment)
+List the exact commands and manual checks performed.
 
 ```text
-@codex review
-@coderabbitai review
-@greptile-apps review
-@cubic-dev-ai review
+commands here
 ```
+
+## Visual evidence
+
+Include screenshots or a short recording for visible GUI changes. Write “Not applicable” for non-visual changes.
 
 ## Checklist
 
-- [ ] I tested the change locally
-- [ ] I added or updated tests for behavior changes
-- [ ] I updated docs/changelog if needed
-- [ ] I requested bot reviews after my latest commit (copy/paste block above or equivalent)
-- [ ] All code review bot comments are resolved
-- [ ] All human review comments are resolved
+- [ ] The change is within this Windows fork's documented scope.
+- [ ] I built the affected Rust and/or WinUI targets.
+- [ ] I ran focused tests for behavior changes.
+- [ ] I checked that diagnostics do not contain terminal input or secrets.
+- [ ] I updated README, documentation, and changelog where behavior or requirements changed.
+- [ ] I updated both English and Simplified Chinese resources for user-facing text changes.
+- [ ] I did not commit generated build, package, certificate, or installer-stage files.

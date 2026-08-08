@@ -92,6 +92,15 @@ New-Item -ItemType Directory -Force -Path $dist | Out-Null
 if ($LASTEXITCODE -ne 0) { throw "GUI publish failed ($LASTEXITCODE)" }
 
 Copy-Item $EngineDll (Join-Path $stage 'cmux_ffi.dll') -Force
+Copy-Item (Join-Path $repo 'LICENSE') (Join-Path $stage 'LICENSE') -Force
+Copy-Item (Join-Path $repo 'THIRD_PARTY_LICENSES.md') (Join-Path $stage 'THIRD_PARTY_LICENSES.md') -Force
+
+$licenseDir = Join-Path $stage 'licenses'
+New-Item -ItemType Directory -Force -Path $licenseDir | Out-Null
+Copy-Item (Join-Path $repo 'ghostty\LICENSE') (Join-Path $licenseDir 'Ghostty-MIT.txt') -Force
+Copy-Item (Join-Path $repo 'cmux-tui\vendor\crossterm\LICENSE') (Join-Path $licenseDir 'Crossterm-MIT.txt') -Force
+Copy-Item (Join-Path $repo 'cmux-tui\vendor\terminput-crossterm\LICENSE-MIT') (Join-Path $licenseDir 'terminput-crossterm-MIT.txt') -Force
+Copy-Item (Join-Path $repo 'cmux-tui\vendor\terminput-crossterm\LICENSE-APACHE') (Join-Path $licenseDir 'terminput-crossterm-Apache-2.0.txt') -Force
 
 $required = @(
     'CmuxGui.exe',
@@ -99,6 +108,12 @@ $required = @(
     'CmuxGui.deps.json',
     'CmuxGui.runtimeconfig.json',
     'cmux_ffi.dll',
+    'LICENSE',
+    'THIRD_PARTY_LICENSES.md',
+    'licenses\Ghostty-MIT.txt',
+    'licenses\Crossterm-MIT.txt',
+    'licenses\terminput-crossterm-MIT.txt',
+    'licenses\terminput-crossterm-Apache-2.0.txt',
     'Microsoft.ui.xaml.dll',
     'resources.pri'
 )

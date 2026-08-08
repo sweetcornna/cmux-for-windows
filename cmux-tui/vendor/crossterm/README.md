@@ -190,8 +190,7 @@ This can disable `mio` / `signal-hook` / `signal-hook-mio` dependencies.
 
 ## Contributing
 
-We highly appreciate when anyone contributes to this crate. Before you do, please,
-read the [Contributing](docs/CONTRIBUTING.md) guidelines.
+We highly appreciate when anyone contributes to this crate. Contribution guidelines are maintained in the [upstream Crossterm repository](https://github.com/crossterm-rs/crossterm).
 
 ## Authors
 

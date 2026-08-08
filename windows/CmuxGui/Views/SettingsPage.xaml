@@ -276,8 +276,15 @@
                                    Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
                     </StackPanel>
                 </Expander.Header>
-                <TextBlock x:Name="AboutDesc" Padding="0,10" TextWrapping="Wrap"
-                           Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                <StackPanel Spacing="6" Padding="0,10">
+                    <TextBlock x:Name="AboutDesc" TextWrapping="Wrap"
+                               Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                    <HyperlinkButton x:Name="ProjectLinkButton"
+                                     NavigateUri="https://github.com/sweetcornna/cmux-for-windows"
+                                     Padding="0" HorizontalAlignment="Left" />
+                    <TextBlock x:Name="LegalNoticeText" TextWrapping="Wrap"
+                               Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                </StackPanel>
             </Expander>
 
         </StackPanel>
