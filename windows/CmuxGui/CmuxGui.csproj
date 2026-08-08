@@ -11,6 +11,7 @@
     <UseWinUI>true</UseWinUI>
     <Nullable>enable</Nullable>
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <ApplicationIcon>Assets\AppIcon.ico</ApplicationIcon>
     <!-- Unpackaged: the app runs from a plain folder like the TUI binary does,
          instead of requiring MSIX installation for a dev build. -->
     <WindowsPackageType>None</WindowsPackageType>
