@@ -1016,6 +1016,7 @@ pub enum RegistryBrowserSource {
     Unknown,
     External,
     Launched,
+    Native,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -1029,6 +1030,7 @@ pub enum RegistryBrowserLaunch {
 #[serde(rename_all = "snake_case")]
 pub enum RegistryBrowserReconnect {
     Recreate,
+    Frontend,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]

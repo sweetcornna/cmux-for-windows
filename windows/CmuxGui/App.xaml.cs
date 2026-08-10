@@ -1,17 +1,32 @@
 using System;
+using System.IO;
+using System.IO.Pipes;
 using System.Linq;
+using System.Text;
+using System.Threading;
+using System.Threading.Tasks;
 using CmuxGui.Services;
 using Microsoft.UI.Xaml;
+using Microsoft.UI.Xaml.Media;
 using Microsoft.Windows.Globalization;
+using Windows.UI.ViewManagement;
 
 namespace CmuxGui;
 
 public partial class App : Application
 {
+    private static SolidColorBrush? _accentBrush;
+
+    internal static SolidColorBrush AccentBrush => _accentBrush
+        ?? throw new InvalidOperationException("The accent brush is not initialized.");
+
     private Window? _window;
     private static bool _registerShell;
     private static bool _repairShell;
     private static bool _unregisterShell;
+    private static bool _launchAsNewWindow;
+    private Mutex? _instanceMutex;
+    private CancellationTokenSource? _activationCancellation;
 
     /// <summary>
     /// HWND of the main window.
@@ -48,6 +63,17 @@ public partial class App : Application
         InitializeComponent();
     }
 
+    internal static void InitializeAccentBrush()
+    {
+        _accentBrush ??= new SolidColorBrush(Microsoft.UI.Colors.DodgerBlue);
+    }
+
+    internal static void ApplyAccentColor(Windows.UI.Color? accent)
+    {
+        AccentBrush.Color = accent
+            ?? new UISettings().GetColorValue(UIColorType.Accent);
+    }
+
     /// <summary>
     /// Read the verbs Explorer and the uninstaller invoke.
     /// </summary>
@@ -78,6 +104,7 @@ public partial class App : Application
             {
                 LaunchFolder = args[i + 1].Trim('"');
                 LaunchAsWorkspace = isWorkspace;
+                _launchAsNewWindow = isWindow;
                 Diag.Log($"launch verb={(isWorkspace ? "workspace" : "window")} folder='{LaunchFolder}'");
                 return;
             }
@@ -103,9 +130,116 @@ public partial class App : Application
             return;
         }
 
-        var window = new MainWindow();
+        var sessionName = "cmux-gui";
+        var persistentSession = true;
+        if (!_launchAsNewWindow)
+        {
+            var mutexName = $"Local\\cmux-for-windows-{Environment.UserName}";
+            _instanceMutex = new Mutex(true, mutexName, out var ownsMainInstance);
+            if (!ownsMainInstance)
+            {
+                _instanceMutex.Dispose();
+                _instanceMutex = null;
+                if (ForwardActivation(LaunchAsWorkspace ? LaunchFolder : null))
+                {
+                    Exit();
+                    return;
+                }
+                sessionName = $"cmux-gui-window-{Guid.NewGuid():N}";
+                persistentSession = false;
+                _launchAsNewWindow = true;
+            }
+        }
+        else
+        {
+            sessionName = $"cmux-gui-window-{Guid.NewGuid():N}";
+            persistentSession = false;
+        }
+
+        var window = new MainWindow(sessionName, LaunchFolder, persistentSession);
         _window = window;
         MainWindowHandle = WinRT.Interop.WindowNative.GetWindowHandle(window);
+        window.Closed += OnMainWindowClosed;
         window.Activate();
+        if (!_launchAsNewWindow)
+        {
+            _activationCancellation = new CancellationTokenSource();
+            _ = ListenForActivationsAsync(window, _activationCancellation.Token);
+        }
+    }
+
+    private static string ActivationPipeName => $"cmux-for-windows-{Environment.UserName}";
+
+    private static bool ForwardActivation(string? folder)
+    {
+        try
+        {
+            using var pipe = new NamedPipeClientStream(
+                ".",
+                ActivationPipeName,
+                PipeDirection.Out,
+                PipeOptions.None);
+            pipe.Connect(5000);
+            using var writer = new BinaryWriter(pipe, Encoding.UTF8, leaveOpen: true);
+            writer.Write(folder is not null);
+            if (folder is not null)
+            {
+                writer.Write(folder);
+            }
+            writer.Flush();
+            return true;
+        }
+        catch (Exception ex)
+        {
+            Diag.Log($"activation forwarding failed: {ex.Message}");
+            return false;
+        }
+    }
+
+    private static async Task ListenForActivationsAsync(
+        MainWindow window,
+        CancellationToken cancellationToken)
+    {
+        while (!cancellationToken.IsCancellationRequested)
+        {
+            try
+            {
+                await using var pipe = new NamedPipeServerStream(
+                    ActivationPipeName,
+                    PipeDirection.In,
+                    1,
+                    PipeTransmissionMode.Byte,
+                    PipeOptions.Asynchronous);
+                await pipe.WaitForConnectionAsync(cancellationToken);
+                using var reader = new BinaryReader(pipe, Encoding.UTF8, leaveOpen: true);
+                var folder = reader.ReadBoolean() ? reader.ReadString() : null;
+                window.DispatcherQueue.TryEnqueue(() => window.HandleActivation(folder));
+            }
+            catch (OperationCanceledException)
+            {
+                return;
+            }
+            catch (Exception ex)
+            {
+                Diag.Log($"activation listener failed: {ex.Message}");
+            }
+        }
+    }
+
+    private void OnMainWindowClosed(object sender, WindowEventArgs args)
+    {
+        if (sender is Window window)
+        {
+            window.Closed -= OnMainWindowClosed;
+        }
+        _activationCancellation?.Cancel();
+        _activationCancellation?.Dispose();
+        _activationCancellation = null;
+        if (_instanceMutex is not null)
+        {
+            _instanceMutex.ReleaseMutex();
+            _instanceMutex.Dispose();
+            _instanceMutex = null;
+        }
     }
 }

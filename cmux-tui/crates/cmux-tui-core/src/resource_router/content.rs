@@ -26,8 +26,8 @@ use crate::resource::{
 #[cfg(test)]
 use crate::resource_api::public_session_snapshot;
 use crate::workspace_registry::{
-    RegistryBrowserLaunch, RegistryBrowserSource, RegistryBrowserStatus, ResourceChange,
-    ResourcePatch, WorkspaceRegistry,
+    RegistryBrowserLaunch, RegistryBrowserReconnect, RegistryBrowserSource, RegistryBrowserStatus,
+    ResourceChange, ResourcePatch, WorkspaceRegistry,
 };
 use crate::{Mux, ResourceSelectors, ResourceTarget, Surface, SurfaceKind, WorkspaceMutation};
 
@@ -412,12 +412,23 @@ fn browser_effect(mux: &Arc<Mux>, request: ParsedResourceRequest) -> Result<Valu
     let fields = request.fields.clone();
     let preparation = effects::prepare(mux, &request, || {
         let (browser_id, surface) = resolve_browser_surface(mux, &request.selectors)?;
-        if request.envelope.operation != ResourceOperation::BrowserClose
-            && surface.browser_source().is_none()
-        {
+        let source = surface.browser_source();
+        if request.envelope.operation != ResourceOperation::BrowserClose && source.is_none() {
             return Err(browser_not_ready_error(
                 &surface,
                 super::operation_name(request.envelope.operation),
+            ));
+        }
+        if source == Some(BrowserSource::Native)
+            && !matches!(
+                request.envelope.operation,
+                ResourceOperation::BrowserNavigate | ResourceOperation::BrowserClose
+            )
+        {
+            return Err(ResourceError::operation_failed(
+                super::operation_name(request.envelope.operation),
+                "native browser history and input are owned by the frontend",
+                json!({"source":"native"}),
             ));
         }
         Ok(json!({"browser_id":browser_id,"fields":fields}))
@@ -455,13 +466,22 @@ fn execute_browser_effect(
 
     let action = (|| -> Result<(), ActionFailure> {
         match prepared.operation.as_str() {
-            "browser.navigate" => surface
-                .browser_navigate_confirmed(required_intent_string(
-                    &fields,
-                    "url",
-                    &prepared.operation,
-                )?)
-                .map_err(|error| ActionFailure::Indeterminate(error.to_string())),
+            "browser.navigate" => {
+                let url = required_intent_string(&fields, "url", &prepared.operation)?;
+                if surface.browser_source() == Some(BrowserSource::Native) {
+                    surface.browser_commit_native_url(url).map_err(|error| {
+                        ActionFailure::Known(ResourceError::operation_failed(
+                            &prepared.operation,
+                            error.to_string(),
+                            json!({"source":"native"}),
+                        ))
+                    })
+                } else {
+                    surface
+                        .browser_navigate_confirmed(url)
+                        .map_err(|error| ActionFailure::Indeterminate(error.to_string()))
+                }
+            }
             "browser.back" => surface
                 .browser_back_confirmed()
                 .map_err(|error| ActionFailure::Indeterminate(error.to_string())),
@@ -485,7 +505,7 @@ fn execute_browser_effect(
             "browser.input.mouse" => browser_mouse(&surface, &fields),
             "browser.input.wheel" => browser_wheel(&surface, &fields),
             "browser.close" => {
-                if surface.browser_source().is_some() {
+                if surface.browser_source().is_some_and(|source| source != BrowserSource::Native) {
                     surface
                         .browser_close_confirmed()
                         .map_err(|error| ActionFailure::Indeterminate(error.to_string()))?;
@@ -607,6 +627,10 @@ fn targeted_browser_effect_projection(
         browser.source = match source {
             BrowserSource::External => RegistryBrowserSource::External,
             BrowserSource::Launched => RegistryBrowserSource::Launched,
+            BrowserSource::Native => {
+                browser.reconnect = RegistryBrowserReconnect::Frontend;
+                RegistryBrowserSource::Native
+            }
         };
     }
     browser.status = match &status {
@@ -619,6 +643,7 @@ fn targeted_browser_effect_projection(
     let source_name = source.map(BrowserSource::as_str).unwrap_or_else(|| match browser.source {
         RegistryBrowserSource::External => "external",
         RegistryBrowserSource::Launched => "launched",
+        RegistryBrowserSource::Native => "native",
         RegistryBrowserSource::Unknown => match browser.launch {
             RegistryBrowserLaunch::Create => "launched",
             RegistryBrowserLaunch::Adopted => "external",
@@ -2165,6 +2190,94 @@ mod tests {
                 if tab.content_id == ContentPublicId::Browser(browser_id.clone())
         ));
         surface.kill();
+    }
+
+    #[test]
+    fn native_browser_navigation_is_frontend_owned_and_durable() {
+        let mux = Mux::new_for_test("native-browser-content", SurfaceOptions::default());
+        let session = ResourceSelectors {
+            machine: Some("current".to_string()),
+            session: Some("current".to_string()),
+            ..ResourceSelectors::default()
+        };
+        let created = super::super::topology::dispatch(
+            &mux,
+            parsed_request(
+                "tab.create_browser",
+                &session,
+                json!({"url":"https://example.test/initial","backend":"native"}),
+                Some("create-native-browser"),
+            ),
+        )
+        .unwrap();
+        let browser_id =
+            BrowserPublicId::parse(created["value"]["browser_id"].as_str().unwrap()).unwrap();
+        let snapshot = public_session_snapshot(&mux).unwrap();
+        assert_eq!(snapshot["browsers"][0]["source"], "native");
+        assert_eq!(snapshot["browsers"][0]["status"], "live");
+        assert_eq!(snapshot["browsers"][0]["loading"], false);
+        let (_, surface) =
+            browser_surface_for_id(&mux, &browser_id).expect("native browser is live immediately");
+        assert_eq!(surface.browser_source(), Some(BrowserSource::Native));
+        assert_eq!(surface.browser_status(), Some(BrowserStatus::Live));
+        let Surface::Browser(browser) = surface.as_ref() else {
+            panic!("native browser surface changed kind");
+        };
+        assert_eq!(
+            browser.take_worker_done_for_test().recv_timeout(Duration::from_millis(50)),
+            Err(mpsc::RecvTimeoutError::Disconnected),
+            "native browser must not start a CDP worker",
+        );
+
+        let selectors = ResourceSelectors {
+            machine: Some("current".to_string()),
+            session: Some("current".to_string()),
+            browser: Some(browser_id.to_string()),
+            ..ResourceSelectors::default()
+        };
+        let history_error = dispatch(
+            &mux,
+            parsed_request("browser.back", &selectors, json!({}), Some("native-browser-back")),
+        )
+        .unwrap_err();
+        assert_eq!(history_error.code, "operation.failed");
+        assert_eq!(history_error.details["extra"]["source"], "native");
+
+        let navigated = dispatch(
+            &mux,
+            parsed_request(
+                "browser.navigate",
+                &selectors,
+                json!({"url":"https://example.test/next"}),
+                Some("native-browser-navigate"),
+            ),
+        )
+        .unwrap();
+        assert_eq!(navigated["value"]["url"], "https://example.test/next");
+        assert_eq!(navigated["value"]["source"], "native");
+        assert_eq!(navigated["value"]["status"], "live");
+
+        let snapshot = public_session_snapshot(&mux).unwrap();
+        assert_eq!(snapshot["browsers"][0]["url"], "https://example.test/next");
+        assert_eq!(snapshot["browsers"][0]["source"], "native");
+        let durable = mux
+            .with_resource_projection(|registry, _| registry.resource_topology_snapshot())
+            .unwrap();
+        assert_eq!(durable.browsers[0].url, "https://example.test/next");
+        assert_eq!(durable.tabs[0].browser_url.as_deref(), Some("https://example.test/next"));
+        assert_eq!(durable.browsers[0].source, RegistryBrowserSource::Native);
+        assert_eq!(durable.browsers[0].reconnect, RegistryBrowserReconnect::Frontend);
+
+        let closed = dispatch(
+            &mux,
+            parsed_request("browser.close", &selectors, json!({}), Some("native-browser-close")),
+        )
+        .unwrap();
+        assert_eq!(closed["replayed"], false);
+        let snapshot = public_session_snapshot(&mux).unwrap();
+        assert!(snapshot["browsers"].as_array().unwrap().is_empty());
+        assert!(snapshot["tabs"].as_array().unwrap().is_empty());
+        mux.shutdown();
     }
 
     #[test]

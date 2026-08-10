@@ -58,6 +58,7 @@ public sealed partial class TerminalView : UserControl, IDisposable
     // shows the Ghostty background instead of flashing a default.
     private uint _themeBackground = CmuxNative.NoColor;
     private uint _themeForeground = CmuxNative.NoColor;
+    private uint _selectionBackground = CmuxNative.NoColor;
     private float _cellWidth = 8;
     private float _cellHeight = 16;
     // The starting cell size above is a placeholder. Sizing the PTY from it
@@ -68,7 +69,12 @@ public sealed partial class TerminalView : UserControl, IDisposable
     private ushort _rows;
     /// <summary>Input typed before the session existed. See <see cref="Send"/>.</summary>
     private readonly List<byte> _pending = new();
-    private int _inputTrace;
+    private readonly List<(string Chord, byte Action)> _pendingKeys = [];
+    private readonly Dictionary<(VirtualKey Key, uint ScanCode, bool Extended), string>
+        _structuredKeysDown = [];
+    private bool _suppressStructuredCharacter;
+    private bool _postArrangeRefreshPending;
+    private bool _canvasAttached;
     private bool _disposed;
 
     internal TerminalView(MuxRuntime mux, string tabId)
@@ -77,7 +83,6 @@ public sealed partial class TerminalView : UserControl, IDisposable
         _tabId = tabId;
         _root.Children.Add(_backgroundImage);
         _root.Children.Add(_mask);
-        _root.Children.Add(_canvas);
         // A rounded, clipped surface is what makes terminal content read as a
         // Windows 11 card instead of a raw rectangle butted against the chrome.
         // Border clips its child to the corner radius; Grid cannot.
@@ -115,7 +120,7 @@ public sealed partial class TerminalView : UserControl, IDisposable
 
         _canvas.Draw += OnDraw;
         _canvas.CreateResources += OnCreateResources;
-        _canvas.SizeChanged += (_, _) => SyncGrid();
+        _canvas.SizeChanged += OnCanvasSizeChanged;
 
         // The engine has no GUI wakeup yet, so poll near display rate. Redraws
         // are skipped unless the snapshot reports damage.
@@ -133,11 +138,13 @@ public sealed partial class TerminalView : UserControl, IDisposable
 
         Diag.Log("TerminalView ctor");
         Loaded += OnLoaded;
+        Unloaded += OnUnloaded;
         // Deliberately NOT disposing on Unloaded: TabView unloads and reloads
         // its content during setup and on every tab switch, so tearing the
         // session down there kills the terminal before it ever draws. The
         // owning tab disposes this explicitly when it is closed.
         KeyDown += OnKeyDown;
+        KeyUp += OnKeyUp;
         CharacterReceived += OnCharacterReceived;
         // Focus moving away silently is one of the few remaining explanations
         // for keystrokes that never arrive, so make it visible. LosingFocus
@@ -148,6 +155,11 @@ public sealed partial class TerminalView : UserControl, IDisposable
             + $"(state={e.FocusState}, direction={e.Direction}, cancelable={e.Cancel})");
         LostFocus += (_, _) =>
         {
+            foreach (var chord in _structuredKeysDown.Values)
+            {
+                SendKey(chord, 0);
+            }
+            _structuredKeysDown.Clear();
             var holder = XamlRoot is null
                 ? "no-xaml-root"
                 : FocusManager.GetFocusedElement(XamlRoot)?.GetType().FullName ?? "nothing";
@@ -168,6 +180,7 @@ public sealed partial class TerminalView : UserControl, IDisposable
 
         _themeBackground = theme.Background;
         _themeForeground = theme.Foreground;
+        _selectionBackground = theme.SelectionBackground;
 
         _format = new CanvasTextFormat
         {
@@ -203,12 +216,61 @@ public sealed partial class TerminalView : UserControl, IDisposable
     private void OnLoaded(object sender, RoutedEventArgs e)
     {
         Diag.Log($"Loaded size={ActualWidth}x{ActualHeight}");
-        SyncGrid();
+        RequestPostArrangeRefresh();
+        if (!_canvasAttached)
+        {
+            // TabView can unload unselected content before its first load event.
+            DispatcherQueue.TryEnqueue(() =>
+            {
+                if (_disposed || _canvasAttached || !IsLoaded)
+                {
+                    return;
+                }
+                _root.Children.Add(_canvas);
+                _canvasAttached = true;
+                RequestPostArrangeRefresh();
+            });
+        }
         _timer.Start();
         // Loaded can run before the window is activated, and focus does not
         // stick then. Queue a second attempt once the tree is live.
         TakeFocus("loaded", FocusState.Programmatic);
         DispatcherQueue.TryEnqueue(() => TakeFocus("queued", FocusState.Programmatic));
+    }
+
+    private void OnUnloaded(object sender, RoutedEventArgs e) => _timer.Stop();
+
+    private void OnCanvasSizeChanged(object sender, SizeChangedEventArgs e) =>
+        RequestPostArrangeRefresh();
+
+    internal void NotifyHostReparented() => RequestPostArrangeRefresh();
+
+    private void RequestPostArrangeRefresh()
+    {
+        if (_disposed || _postArrangeRefreshPending)
+        {
+            return;
+        }
+        _postArrangeRefreshPending = true;
+        LayoutUpdated += OnPostArrangeLayoutUpdated;
+    }
+
+    private void OnPostArrangeLayoutUpdated(object? sender, object e)
+    {
+        if (_disposed)
+        {
+            LayoutUpdated -= OnPostArrangeLayoutUpdated;
+            _postArrangeRefreshPending = false;
+            return;
+        }
+        if (!SyncGrid())
+        {
+            return;
+        }
+
+        LayoutUpdated -= OnPostArrangeLayoutUpdated;
+        _postArrangeRefreshPending = false;
+        Poll(forceInvalidate: true);
     }
 
     /// <summary>Give the grid keyboard focus. The owning window decides when.</summary>
@@ -241,13 +303,13 @@ public sealed partial class TerminalView : UserControl, IDisposable
 
 
     /// <summary>Match the PTY grid to the control size, creating the session on first use.</summary>
-    private void SyncGrid()
+    private bool SyncGrid()
     {
         // Wait for the measured cell box. Sizing the PTY from the placeholder
         // starts the shell on a grid that never matches what gets drawn.
         if (!_metricsReady)
         {
-            return;
+            return false;
         }
 
         // The canvas, not this control: cells are drawn in canvas coordinates,
@@ -256,20 +318,17 @@ public sealed partial class TerminalView : UserControl, IDisposable
         var height = _canvas.ActualHeight;
         if (_cellWidth <= 0 || _cellHeight <= 0 || width <= 0 || height <= 0)
         {
-            return;
+            return false;
         }
 
         var cols = (ushort)Math.Max(1, (int)(width / _cellWidth));
         var rows = (ushort)Math.Max(1, (int)(height / _cellHeight));
         if (cols == _cols && rows == _rows && _session != IntPtr.Zero)
         {
-            return;
+            return true;
         }
 
         Diag.Log($"SyncGrid {cols}x{rows} canvas={width:F0}x{height:F0} cell={_cellWidth:F2}x{_cellHeight:F2}");
-        _cols = cols;
-        _rows = rows;
-
         if (_session == IntPtr.Zero)
         {
             try
@@ -279,22 +338,34 @@ public sealed partial class TerminalView : UserControl, IDisposable
                 _status = _session == IntPtr.Zero
                     ? "cmux_session_new returned null"
                     : string.Empty;
-                if (_session != IntPtr.Zero)
+                if (_session == IntPtr.Zero)
                 {
-                    ApplySettings();
-                    FlushPendingInput();
+                    return false;
                 }
+
+                _cols = cols;
+                _rows = rows;
+                ApplySettings();
+                FlushPendingInput();
             }
             catch (Exception ex)
             {
                 // A failure here is otherwise invisible: the canvas just stays
                 // blank and the app looks broken with no explanation.
                 _status = $"{ex.GetType().Name}: {ex.Message}";
+                return false;
             }
         }
         else
         {
-            CmuxNative.SessionResize(_session, cols, rows);
+            var result = CmuxNative.SessionResize(_session, cols, rows);
+            if (result != 0)
+            {
+                Diag.Log($"terminal resize failed: result={result} requested={cols}x{rows}");
+                return false;
+            }
+            _cols = cols;
+            _rows = rows;
         }
 
         var needed = cols * rows;
@@ -302,48 +373,15 @@ public sealed partial class TerminalView : UserControl, IDisposable
         {
             _cells = new CmuxNative.Cell[needed];
         }
+        return true;
     }
 
     private void OnSettingsChanged() => ApplySettings();
 
-    /// <summary>Push the selected theme into the engine and refresh the surface.</summary>
+    /// <summary>Refresh the WinUI-owned terminal background layers.</summary>
     private void ApplySettings()
     {
         var settings = AppSettings.Current;
-
-        if (_session != IntPtr.Zero)
-        {
-            // Colour overrides are expressed as Ghostty config lines appended
-            // after the theme, so the engine parses them and last-wins gives
-            // the user's picks priority. No extra ABI surface is needed.
-            var config = new StringBuilder();
-            if (!string.IsNullOrWhiteSpace(settings.Theme))
-            {
-                var text = ThemeCatalog.Read(settings.Theme);
-                if (text is not null)
-                {
-                    config.AppendLine(text);
-                }
-                else
-                {
-                    Diag.Log($"theme '{settings.Theme}' not found");
-                }
-            }
-            if (!string.IsNullOrWhiteSpace(settings.TerminalBackground))
-            {
-                config.AppendLine($"background = {settings.TerminalBackground}");
-            }
-            if (!string.IsNullOrWhiteSpace(settings.TerminalForeground))
-            {
-                config.AppendLine($"foreground = {settings.TerminalForeground}");
-            }
-
-            if (config.Length > 0)
-            {
-                var bytes = Encoding.UTF8.GetBytes(config.ToString());
-                CmuxNative.SessionApplyThemeText(_session, bytes, (nuint)bytes.Length);
-            }
-        }
 
         _backgroundImage.Opacity = settings.BackgroundImageOpacity;
         _backgroundImage.Source = null;
@@ -374,7 +412,7 @@ public sealed partial class TerminalView : UserControl, IDisposable
         _canvas.Invalidate();
     }
 
-    private void Poll()
+    private void Poll(bool forceInvalidate = false)
     {
         if (_session == IntPtr.Zero)
         {
@@ -389,9 +427,7 @@ public sealed partial class TerminalView : UserControl, IDisposable
 
         _cellCount = written;
         _frame = frame;
-        // Cursor blink and output both surface as damage, so this is the only
-        // condition that needs a repaint.
-        if (frame.Dirty != 0)
+        if (forceInvalidate || frame.Dirty != 0)
         {
             _canvas.Invalidate();
         }
@@ -496,7 +532,8 @@ public sealed partial class TerminalView : UserControl, IDisposable
                     {
                         break;
                     }
-                    run.Append(char.ConvertFromUtf32((int)c.Ch));
+                    var text = CmuxNative.TextOf(c);
+                    run.Append(text.Length == 0 ? char.ConvertFromUtf32((int)c.Ch) : text);
                     col++;
                 }
 
@@ -513,13 +550,24 @@ public sealed partial class TerminalView : UserControl, IDisposable
                                 _formats[StyleIndex(style)]);
                 }
             }
+
+            for (col = 0; col < _frame.Cols; col++)
+            {
+                var index = row * _frame.Cols + col;
+                if (index >= _cellCount || _cells[index].Width == 0)
+                {
+                    continue;
+                }
+                DrawDecorations(ds, _cells[index], col * _cellWidth, y, defaultFg);
+            }
         }
 
         // Selection sits above the cells and below the cursor, tinted rather than
         // opaque so the text under it stays readable.
         if (SelectionRange() is { } sel)
         {
-            var tint = Color.FromArgb(90, 0x0A, 0x84, 0xFF);
+            var selection = FromPacked(_selectionBackground, Color.FromArgb(255, 0x0A, 0x84, 0xFF));
+            var tint = Color.FromArgb(110, selection.R, selection.G, selection.B);
             for (var row = sel.Start.Row; row <= sel.End.Row && row < _frame.Rows; row++)
             {
                 var first = row == sel.Start.Row ? sel.Start.Col : 0;
@@ -533,9 +581,24 @@ public sealed partial class TerminalView : UserControl, IDisposable
 
         if (_frame.CursorVisible != 0)
         {
-            ds.FillRectangle(
-                new Rect(_frame.CursorCol * _cellWidth, _frame.CursorRow * _cellHeight, _cellWidth, _cellHeight),
-                defaultFg);
+            var cursor = FromPacked(_frame.CursorColor, defaultFg);
+            var x = _frame.CursorCol * _cellWidth;
+            var y = _frame.CursorRow * _cellHeight;
+            switch (_frame.CursorShape)
+            {
+                case 2:
+                    ds.FillRectangle(new Rect(x, y + _cellHeight - 2, _cellWidth, 2), cursor);
+                    break;
+                case 3:
+                    ds.FillRectangle(new Rect(x, y, 2, _cellHeight), cursor);
+                    break;
+                case 4:
+                    ds.DrawRectangle(new Rect(x, y, _cellWidth, _cellHeight), cursor, 1);
+                    break;
+                default:
+                    ds.FillRectangle(new Rect(x, y, _cellWidth, _cellHeight), cursor);
+                    break;
+            }
         }
     }
 
@@ -544,8 +607,70 @@ public sealed partial class TerminalView : UserControl, IDisposable
     // to disk in plaintext. Diagnose focus and routing instead, which is what
     // actually goes wrong.
 
+    private void DrawDecorations(
+        CanvasDrawingSession drawing,
+        in CmuxNative.Cell cell,
+        float x,
+        float y,
+        Color defaultForeground)
+    {
+        if (cell.Underline == 0 && !Has(cell.Attrs, AttrStrikethrough))
+        {
+            return;
+        }
+        var colour = cell.Fg == CmuxNative.NoColor
+            ? defaultForeground
+            : FromPacked(cell.Fg, defaultForeground);
+        var width = _cellWidth * Math.Max(1, (int)cell.Width);
+        if (Has(cell.Attrs, AttrStrikethrough))
+        {
+            var strikeY = y + _cellHeight * 0.55f;
+            drawing.DrawLine(x, strikeY, x + width, strikeY, colour, 1);
+        }
+        if (cell.Underline == 0)
+        {
+            return;
+        }
+        var underlineY = y + _cellHeight - 2;
+        switch (cell.Underline)
+        {
+            case 2:
+                drawing.DrawLine(x, underlineY - 2, x + width, underlineY - 2, colour, 1);
+                drawing.DrawLine(x, underlineY, x + width, underlineY, colour, 1);
+                break;
+            case 3:
+                for (var offset = 0f; offset < width; offset += 4)
+                {
+                    drawing.DrawLine(
+                        x + offset,
+                        underlineY + ((int)(offset / 4) % 2 == 0 ? -1 : 1),
+                        x + Math.Min(width, offset + 4),
+                        underlineY + ((int)(offset / 4) % 2 == 0 ? 1 : -1),
+                        colour,
+                        1);
+                }
+                break;
+            case 4:
+                for (var offset = 0f; offset < width; offset += 3)
+                {
+                    drawing.FillCircle(x + offset, underlineY, 0.7f, colour);
+                }
+                break;
+            case 5:
+                for (var offset = 0f; offset < width; offset += 6)
+                {
+                    drawing.DrawLine(x + offset, underlineY, x + Math.Min(width, offset + 4), underlineY, colour, 1);
+                }
+                break;
+            default:
+                drawing.DrawLine(x, underlineY, x + width, underlineY, colour, 1);
+                break;
+        }
+    }
+
     private const ushort AttrBold = 0x0001;
     private const ushort AttrItalic = 0x0002;
+    private const ushort AttrStrikethrough = 0x0004;
     private const ushort AttrInverse = 0x0008;
     private const ushort AttrFaint = 0x0010;
     private const ushort AttrInvisible = 0x0020;
@@ -575,7 +700,12 @@ public sealed partial class TerminalView : UserControl, IDisposable
 
     private void OnCharacterReceived(UIElement sender, CharacterReceivedRoutedEventArgs args)
     {
-        TraceInput("char");
+        if (_suppressStructuredCharacter)
+        {
+            _suppressStructuredCharacter = false;
+            args.Handled = true;
+            return;
+        }
         // Printable input, including anything produced by an IME.
         Send(Encoding.UTF8.GetBytes(args.Character.ToString()));
         args.Handled = true;
@@ -583,31 +713,146 @@ public sealed partial class TerminalView : UserControl, IDisposable
 
     private void OnKeyDown(object sender, KeyRoutedEventArgs e)
     {
-        TraceInput("key");
-        // Keys that never arrive as characters.
-        byte[]? bytes = e.Key switch
+        var key = KeyName(e);
+        var control = IsKeyDown(VirtualKey.Control);
+        var alt = IsKeyDown(VirtualKey.Menu);
+        var shift = IsKeyDown(VirtualKey.Shift);
+        if (key is null || (!control && !alt && IsPrintableKey(e.Key)))
         {
-            VirtualKey.Enter => new byte[] { 0x0d },
-            VirtualKey.Back => new byte[] { 0x7f },
-            VirtualKey.Tab => new byte[] { 0x09 },
-            VirtualKey.Escape => new byte[] { 0x1b },
-            VirtualKey.Up => Encoding.ASCII.GetBytes("\x1b[A"),
-            VirtualKey.Down => Encoding.ASCII.GetBytes("\x1b[B"),
-            VirtualKey.Right => Encoding.ASCII.GetBytes("\x1b[C"),
-            VirtualKey.Left => Encoding.ASCII.GetBytes("\x1b[D"),
-            VirtualKey.Home => Encoding.ASCII.GetBytes("\x1b[H"),
-            VirtualKey.End => Encoding.ASCII.GetBytes("\x1b[F"),
-            VirtualKey.Delete => Encoding.ASCII.GetBytes("\x1b[3~"),
-            VirtualKey.PageUp => Encoding.ASCII.GetBytes("\x1b[5~"),
-            VirtualKey.PageDown => Encoding.ASCII.GetBytes("\x1b[6~"),
-            _ => null,
-        };
+            return;
+        }
 
-        if (bytes is not null)
+        var chord = new StringBuilder();
+        if (control)
         {
-            Send(bytes);
+            chord.Append("ctrl+");
+        }
+        if (alt)
+        {
+            chord.Append("alt+");
+        }
+        if (shift)
+        {
+            chord.Append("shift+");
+        }
+        chord.Append(key);
+        var value = chord.ToString();
+        var identity = (e.Key, e.KeyStatus.ScanCode, e.KeyStatus.IsExtendedKey);
+        var action = e.KeyStatus.WasKeyDown ? (byte)2 : (byte)1;
+        _structuredKeysDown[identity] = value;
+        if (NumpadProducesCharacter(key))
+        {
+            _suppressStructuredCharacter = true;
+            DispatcherQueue.TryEnqueue(() => _suppressStructuredCharacter = false);
+        }
+        SendKey(value, action);
+        e.Handled = true;
+    }
+
+    private void OnKeyUp(object sender, KeyRoutedEventArgs e)
+    {
+        var identity = (e.Key, e.KeyStatus.ScanCode, e.KeyStatus.IsExtendedKey);
+        if (_structuredKeysDown.Remove(identity, out var chord))
+        {
+            SendKey(chord, 0);
             e.Handled = true;
         }
+    }
+
+    private static bool IsPrintableKey(VirtualKey key) =>
+        key is >= VirtualKey.A and <= VirtualKey.Z
+        || key is >= VirtualKey.Number0 and <= VirtualKey.Number9
+        || key is VirtualKey.Space;
+
+    private static bool NumpadProducesCharacter(string key) => key is
+        "numpad0" or "numpad1" or "numpad2" or "numpad3" or "numpad4"
+        or "numpad5" or "numpad6" or "numpad7" or "numpad8" or "numpad9"
+        or "numpadadd" or "numpadcomma" or "numpaddecimal" or "numpaddivide"
+        or "numpadequal" or "numpadmultiply" or "numpadseparator" or "numpadsubtract";
+
+    private static string? KeyName(KeyRoutedEventArgs args)
+    {
+        var key = args.Key;
+        if (NumpadKeyName(key, args.KeyStatus) is { } numpad)
+        {
+            return numpad;
+        }
+        if (key is >= VirtualKey.A and <= VirtualKey.Z)
+        {
+            return ((char)('a' + (int)key - (int)VirtualKey.A)).ToString();
+        }
+        if (key is >= VirtualKey.Number0 and <= VirtualKey.Number9)
+        {
+            return ((char)('0' + (int)key - (int)VirtualKey.Number0)).ToString();
+        }
+        if (key is >= VirtualKey.F1 and <= VirtualKey.F24)
+        {
+            return $"f{(int)key - (int)VirtualKey.F1 + 1}";
+        }
+        return key switch
+        {
+            VirtualKey.Enter => "enter",
+            VirtualKey.Back => "backspace",
+            VirtualKey.Tab => "tab",
+            VirtualKey.Escape => "escape",
+            VirtualKey.Insert => "insert",
+            VirtualKey.Delete => "delete",
+            VirtualKey.Up => "up",
+            VirtualKey.Down => "down",
+            VirtualKey.Right => "right",
+            VirtualKey.Left => "left",
+            VirtualKey.Home => "home",
+            VirtualKey.End => "end",
+            VirtualKey.PageUp => "pageup",
+            VirtualKey.PageDown => "pagedown",
+            VirtualKey.Space => "space",
+            VirtualKey.NumberKeyLock => "numlock",
+            _ => null,
+        };
+    }
+
+    private static string? NumpadKeyName(
+        VirtualKey key,
+        Windows.UI.Core.CorePhysicalKeyStatus status)
+    {
+        if (status.IsExtendedKey)
+        {
+            return status.ScanCode switch
+            {
+                0x1C => "numpadenter",
+                0x35 => "numpaddivide",
+                _ => null,
+            };
+        }
+        return status.ScanCode switch
+        {
+            0x47 => key == VirtualKey.Home ? "numpadhome" : "numpad7",
+            0x48 => key == VirtualKey.Up ? "numpadup" : "numpad8",
+            0x49 => key == VirtualKey.PageUp ? "numpadpageup" : "numpad9",
+            0x4B => key == VirtualKey.Left ? "numpadleft" : "numpad4",
+            0x4C => key == VirtualKey.Clear ? "numpadbegin" : "numpad5",
+            0x4D => key == VirtualKey.Right ? "numpadright" : "numpad6",
+            0x4F => key == VirtualKey.End ? "numpadend" : "numpad1",
+            0x50 => key == VirtualKey.Down ? "numpaddown" : "numpad2",
+            0x51 => key == VirtualKey.PageDown ? "numpadpagedown" : "numpad3",
+            0x52 => key == VirtualKey.Insert ? "numpadinsert" : "numpad0",
+            0x53 => key == VirtualKey.Delete ? "numpaddelete" : "numpaddecimal",
+            0x37 => "numpadmultiply",
+            0x4A => "numpadsubtract",
+            0x4E => "numpadadd",
+            _ => null,
+        };
+    }
+
+    private void SendKey(string chord, byte action)
+    {
+        if (_session == IntPtr.Zero)
+        {
+            _pendingKeys.Add((chord, action));
+            return;
+        }
+        var bytes = Encoding.UTF8.GetBytes(chord);
+        CmuxNative.SessionKeyEvent(_session, bytes, (nuint)bytes.Length, action);
     }
 
     private void Send(byte[] bytes)
@@ -622,7 +867,6 @@ public sealed partial class TerminalView : UserControl, IDisposable
             // anything typed in that gap used to vanish. Hold it instead, and
             // let the shell receive it once there is somewhere to put it.
             _pending.AddRange(bytes);
-            TraceInput("queued");
             return;
         }
         CmuxNative.SessionWrite(_session, bytes, (nuint)bytes.Length);
@@ -631,42 +875,31 @@ public sealed partial class TerminalView : UserControl, IDisposable
     /// <summary>Deliver anything typed before the session existed.</summary>
     private void FlushPendingInput()
     {
-        if (_pending.Count == 0 || _session == IntPtr.Zero)
+        if (_session == IntPtr.Zero)
         {
             return;
         }
-        var bytes = _pending.ToArray();
-        _pending.Clear();
-        Diag.Log($"flushing {bytes.Length} byte(s) typed before the session was ready");
-        CmuxNative.SessionWrite(_session, bytes, (nuint)bytes.Length);
+        if (_pending.Count > 0)
+        {
+            var bytes = _pending.ToArray();
+            _pending.Clear();
+            CmuxNative.SessionWrite(_session, bytes, (nuint)bytes.Length);
+        }
+        if (_pendingKeys.Count > 0)
+        {
+            var keys = _pendingKeys.ToArray();
+            _pendingKeys.Clear();
+            foreach (var (chord, action) in keys)
+            {
+                SendKey(chord, action);
+            }
+        }
     }
 
-    /// <summary>
-    /// Record that input arrived, never what it was.
-    ///
-    /// Bounded to the opening moments: an unbounded version would be a
-    /// per-keystroke disk write, and one that included the key or character
-    /// would be a keylogger. Neither is acceptable; do not add either back.
-    /// </summary>
-    private void TraceInput(string what)
-    {
-        if (_inputTrace >= 30)
-        {
-            return;
-        }
-        _inputTrace++;
-        var holder = XamlRoot is null
-            ? "no-xaml-root"
-            : FocusManager.GetFocusedElement(XamlRoot)?.GetType().Name ?? "none";
-        // The keyboard layout says whether an IME is in play. Injected input and
-        // physical keypresses take different routes through TSF, which is why
-        // synthetic tests cannot stand in for a real keyboard here.
-        var layout = (uint)GetKeyboardLayout(0) & 0xFFFF;
-        Diag.Log($"input {what} sessionReady={_session != IntPtr.Zero} focus={holder} hkl=0x{layout:X4}");
-    }
+    private static bool IsKeyDown(VirtualKey key) => (GetKeyState((int)key) & 0x8000) != 0;
 
     [System.Runtime.InteropServices.DllImport("user32.dll")]
-    private static extern IntPtr GetKeyboardLayout(uint threadId);
+    private static extern short GetKeyState(int virtualKey);
 
     private static Color FromPacked(uint packed, Color fallback)
     {
@@ -690,12 +923,21 @@ public sealed partial class TerminalView : UserControl, IDisposable
         _disposed = true;
 
         AppSettings.Changed -= OnSettingsChanged;
+        Loaded -= OnLoaded;
+        Unloaded -= OnUnloaded;
+        LayoutUpdated -= OnPostArrangeLayoutUpdated;
+        _postArrangeRefreshPending = false;
+        _canvas.SizeChanged -= OnCanvasSizeChanged;
         _timer.Stop();
         if (_session != IntPtr.Zero)
         {
             CmuxNative.SessionFree(_session);
             _session = IntPtr.Zero;
         }
-        _canvas.RemoveFromVisualTree();
+        if (_canvasAttached)
+        {
+            _canvas.RemoveFromVisualTree();
+            _canvasAttached = false;
+        }
     }
 }

@@ -7,15 +7,16 @@ namespace CmuxGui.Services;
 /// <summary>
 /// Explorer context-menu entries for folders.
 ///
-/// Everything is written under <c>HKEY_CURRENT_USER\Software\Classes</c>, which
-/// needs no elevation and keeps the change scoped to the signed-in user. The
-/// classic verb keys are used rather than an IExplorerCommand package because
-/// this build is unpackaged and has no MSIX identity to register against.
+/// The Windows 11 <c>IExplorerCommand</c> reads a per-user enabled flag, while
+/// classic verb keys remain available on Windows 10 and under "Show more
+/// options". Everything is scoped to the signed-in user.
 /// </summary>
 public static class ShellIntegration
 {
     private const string OpenWindowVerb = "cmuxOpenWindow";
     private const string OpenWorkspaceVerb = "cmuxOpenWorkspace";
+    private const string StateKey = @"Software\cmux\ShellIntegration";
+    private const string EnabledValue = "Enabled";
 
     /// <summary>Right-clicking a folder, and right-clicking empty space inside one.</summary>
     private static readonly string[] Roots =
@@ -30,6 +31,12 @@ public static class ShellIntegration
         {
             try
             {
+                using var state = Registry.CurrentUser.OpenSubKey(StateKey);
+                if (state?.GetValue(EnabledValue) is int enabled && enabled != 0)
+                {
+                    return true;
+                }
+
                 using var key = Registry.CurrentUser.OpenSubKey($@"{Roots[0]}\{OpenWindowVerb}");
                 return key is not null;
             }
@@ -52,13 +59,28 @@ public static class ShellIntegration
 
         try
         {
+            var icon = System.IO.Path.Combine(
+                System.IO.Path.GetDirectoryName(exe) ?? string.Empty,
+                "Assets",
+                "AppIcon.ico");
+            if (!System.IO.File.Exists(icon))
+            {
+                icon = exe;
+            }
             foreach (var root in Roots)
             {
                 // "%V" is the folder that was clicked. For the Background case
                 // it is the open folder itself, which "%1" would not give.
-                WriteVerb(root, OpenWindowVerb, openWindowLabel, exe, "--new-window");
-                WriteVerb(root, OpenWorkspaceVerb, openWorkspaceLabel, exe, "--new-workspace");
+                WriteVerb(root, OpenWindowVerb, openWindowLabel, exe, icon, "--new-window");
+                WriteVerb(root, OpenWorkspaceVerb, openWorkspaceLabel, exe, icon, "--new-workspace");
             }
+
+            using var state = Registry.CurrentUser.CreateSubKey(StateKey);
+            if (state is null)
+            {
+                return false;
+            }
+            state.SetValue(EnabledValue, 1, RegistryValueKind.DWord);
             NotifyShell();
             return true;
         }
@@ -78,6 +100,7 @@ public static class ShellIntegration
                 Registry.CurrentUser.DeleteSubKeyTree($@"{root}\{OpenWindowVerb}", throwOnMissingSubKey: false);
                 Registry.CurrentUser.DeleteSubKeyTree($@"{root}\{OpenWorkspaceVerb}", throwOnMissingSubKey: false);
             }
+            Registry.CurrentUser.DeleteSubKeyTree(StateKey, throwOnMissingSubKey: false);
             NotifyShell();
             return true;
         }
@@ -88,7 +111,13 @@ public static class ShellIntegration
         }
     }
 
-    private static void WriteVerb(string root, string verb, string label, string exe, string argument)
+    private static void WriteVerb(
+        string root,
+        string verb,
+        string label,
+        string exe,
+        string icon,
+        string argument)
     {
         using var key = Registry.CurrentUser.CreateSubKey($@"{root}\{verb}");
         if (key is null)
@@ -97,7 +126,7 @@ public static class ShellIntegration
         }
         // MUIVerb is the displayed text; Icon gives Explorer the app glyph.
         key.SetValue("MUIVerb", label);
-        key.SetValue("Icon", exe);
+        key.SetValue("Icon", $"\"{icon}\",0");
 
         using var command = key.CreateSubKey("command");
         command?.SetValue(string.Empty, $"\"{exe}\" {argument} \"%V\"");

@@ -47,8 +47,6 @@
                     <ComboBox x:Name="BackdropCombo" MinWidth="200" SelectionChanged="OnBackdropChanged" />
                     <Slider x:Name="OpacitySlider" Minimum="20" Maximum="100"
                             ValueChanged="OnOpacityChanged" />
-                    <Slider x:Name="BlurSlider" Minimum="0" Maximum="100"
-                            ValueChanged="OnBlurChanged" />
                     <Grid ColumnSpacing="16">
                         <Grid.ColumnDefinitions>
                             <ColumnDefinition Width="*" />
@@ -81,6 +79,24 @@
                             </Button.Flyout>
                         </Button>
                     </Grid>
+                    <Grid ColumnSpacing="16">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="Auto" />
+                        </Grid.ColumnDefinitions>
+                        <TextBlock x:Name="AccentLabel" VerticalAlignment="Center" />
+                        <Button x:Name="AccentButton" Grid.Column="1" MinWidth="120">
+                            <Button.Flyout>
+                                <Flyout>
+                                    <ColorPicker x:Name="AccentPicker" IsAlphaEnabled="False"
+                                                 IsHexInputVisible="True"
+                                                 ColorChanged="OnAccentChanged" />
+                                </Flyout>
+                            </Button.Flyout>
+                        </Button>
+                    </Grid>
+                    <Button x:Name="ResetAppearanceButton" Click="OnResetAppearance"
+                            HorizontalAlignment="Left" />
                 </StackPanel>
             </Expander>
 

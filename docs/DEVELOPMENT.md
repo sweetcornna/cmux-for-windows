@@ -11,8 +11,9 @@ This guide describes the supported Windows development environment for the nativ
 - LLVM/Clang with `libclang` available to bindgen.
 - .NET 8 SDK.
 - Git with submodule support.
+- Visual Studio Build Tools with the x64 C++ toolset and Windows 10/11 SDK when building Explorer integration, the installer, or the development MSIX.
+- Microsoft Edge WebView2 Runtime when exercising native browser panes.
 - Inno Setup 6 or 7 only when building the public installer.
-- Visual Studio Build Tools only when building the optional development MSIX.
 
 The Rust engine has a GNU ABI even when the host Rust toolchain uses MSVC. Do not change the target to `x86_64-pc-windows-msvc`: Ghostty's Zig-built static library and the Rust artifact would use incompatible ABIs.
 
@@ -100,6 +101,17 @@ Run the generated `CmuxGui.exe` from the matching `bin\Debug\net8.0-windows10.0.
 
 The GUI is self-contained with respect to Windows App SDK. It does not depend on the machine's installed Windows App Runtime version.
 
+### Build the Windows 11 Explorer command
+
+The first-level Windows 11 context menu uses the native x64 `IExplorerCommand` server under `windows\CmuxShellExtension`. From a Visual Studio Developer PowerShell:
+
+```powershell
+msbuild .\windows\CmuxShellExtension\CmuxShellExtension.vcxproj `
+  /p:Configuration=Debug /p:Platform=x64
+```
+
+`windows\scripts\package.ps1` and `windows\scripts\installer.ps1` build this project automatically. An ordinary unpackaged GUI build can still register the classic Explorer verbs, but the first-level Windows 11 command requires either the development MSIX or the signed sparse package produced for the Inno installer.
+
 ## Run the TUI and local CLI
 
 ```powershell
@@ -141,21 +153,28 @@ The full inherited Rust test suite is not a supported Windows gate. Some retaine
 
 For GUI changes, manually verify:
 
-1. Create, rename, switch, and close workspaces.
-2. Create splits and tabs, then change focus with mouse and keyboard.
-3. Type and paste into PowerShell and `cmd.exe` terminals.
-4. Restart the application and confirm topology restoration with fresh shells.
-5. Change appearance, theme, font, and language settings.
-6. Enable and disable Explorer integration when that code changes.
-7. Confirm `%LOCALAPPDATA%\cmux-gui.log` contains no input content.
+1. Create, rename, reorder, switch, and close workspaces.
+2. Create, rename, switch, and close screens; confirm each screen exposes its own pane topology.
+3. Split panes horizontally and vertically, drag split and viewport dividers, move focus by mouse and `Ctrl+Alt+Arrow`, toggle zoom with `Ctrl+Shift+Enter`, rename panes, and close panes. Repeat split → zoom → unzoom → close cycles and confirm terminal glyphs retain their normal aspect ratio and repaint at the final pane size.
+4. Create, rename, reorder, move between panes, focus, and close terminal and browser tabs.
+5. Exercise press, repeat, and release handling on the main keyboard and numpad; type into PowerShell and `cmd.exe`, use local selection and copy, verify soft-wrapped lines do not acquire hard newlines, paste with and without bracketed-paste mode, and confirm Shift forces local selection when an application has terminal mouse reporting enabled.
+6. In a browser tab, navigate from the address bar, follow a redirect, verify the document title reaches the tab, then use back, forward, and reload. Confirm an unavailable WebView2 Runtime produces a visible browser error rather than closing the workspace.
+7. Restart the main application and confirm workspace, screen, pane, tab, layout, focus, names, and browser URLs are restored with fresh shells and fresh WebView controls; terminal processes, output, scrollback, commands, working directories, page state, and browser history must not be restored.
+8. Launch a second new-workspace activation and confirm it is forwarded to the existing main window. Launch a new-window activation and confirm it uses an independent transient mux whose topology is not restored later.
+9. Change appearance, theme, font, language, background, opacity, and Explorer-integration settings. Confirm terminal foreground/background overrides and full theme palettes update existing visible and hidden terminals, then create another terminal and confirm it inherits the same colors. Select Follow config or reset the overrides and confirm existing terminals immediately return to the Ghostty configuration baseline; also confirm the accent picker immediately updates the new-workspace action, settings sliders, and project link.
+10. Leave terminal and browser panes idle across multiple topology-polling intervals and confirm the controls do not flash or reconstruct; confirm every screen and pane action is uniformly 30 × 30 DIP with a complete centered icon at normal and narrow window sizes, and that changing pane focus does not add an accent-colored outer border.
+11. Enable Explorer integration and confirm both “Open in new cmux window” and “Open in new cmux workspace” appear directly in the Windows 11 menu for a filesystem folder; disable it and confirm both commands disappear. On Windows 10, verify the classic fallbacks instead.
+12. Inspect only diagnostics produced during the acceptance run and confirm they contain no terminal key events, character events, pasted text, credentials, or terminal screen content.
 
 ## Repository layout
 
 | Path | Purpose |
 | --- | --- |
 | `windows/CmuxGui` | Native WinUI 3 frontend |
+| `windows/CmuxShellExtension` | Native x64 `IExplorerCommand` COM server |
+| `windows/CmuxShellPackage` | Sparse package manifest for the Inno installation |
 | `windows/installer` | Inno Setup definition |
-| `windows/scripts` | Installer and development MSIX scripts |
+| `windows/scripts` | Installer, sparse package, and development MSIX scripts |
 | `cmux-tui/crates/cmux-ffi` | C ABI consumed by WinUI |
 | `cmux-tui/crates/cmux-tui-core` | Authoritative multiplexer and persistence model |
 | `cmux-tui/crates/cmux-pty` | PTY abstraction and ConPTY backend |

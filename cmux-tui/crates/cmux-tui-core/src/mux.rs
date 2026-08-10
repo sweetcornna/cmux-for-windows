@@ -22,7 +22,7 @@ use serde_json::{Map, Value};
 use sha2::{Digest, Sha256};
 use zeroize::Zeroize;
 
-use crate::browser::{self, BrowserBootstrap, BrowserRuntime};
+use crate::browser::{self, BrowserBackend, BrowserBootstrap, BrowserRuntime};
 use crate::event_bus::{MuxEventBroadcaster, MuxEventReceiver};
 #[cfg(test)]
 use crate::layout::layout_screen_with_viewport;
@@ -2285,21 +2285,32 @@ impl Mux {
             let Some(browser) = content.browser.clone() else { continue };
             let size = (browser.cols, browser.rows);
             let url = browser.url;
-            let surface = browser::new_surface_with_resource_identity(
-                content.slot,
-                url.clone(),
-                size,
-                cell_pixels,
-                &opts,
-                Arc::downgrade(self),
-                content.identity.clone(),
-            )?;
+            let surface = match browser.reconnect {
+                RegistryBrowserReconnect::Recreate => browser::new_surface_with_resource_identity(
+                    content.slot,
+                    url.clone(),
+                    size,
+                    cell_pixels,
+                    &opts,
+                    Arc::downgrade(self),
+                    content.identity.clone(),
+                )?,
+                RegistryBrowserReconnect::Frontend => {
+                    browser::new_native_surface_with_resource_identity(
+                        content.slot,
+                        url.clone(),
+                        size,
+                        cell_pixels,
+                        &opts,
+                        Arc::downgrade(self),
+                        content.identity.clone(),
+                    )?
+                }
+            };
             surface.set_name(content.name.clone());
             insert_surface_checked(&mut self.state.lock().unwrap(), surface.clone())?;
-            match browser.reconnect {
-                RegistryBrowserReconnect::Recreate => {
-                    self.start_browser_bootstrap(surface, BrowserBootstrap::Create { url }, None);
-                }
+            if browser.reconnect == RegistryBrowserReconnect::Recreate {
+                self.start_browser_bootstrap(surface, BrowserBootstrap::Create { url }, None);
             }
         }
         Ok(())
@@ -5731,6 +5742,7 @@ impl Mux {
         size: Option<(u16, u16)>,
         pending_workspace: Option<WorkspaceId>,
         resource_identity: Option<TabResourceIdentity>,
+        backend: BrowserBackend,
     ) -> anyhow::Result<Arc<Surface>> {
         let _cell_pixel_lifecycle = self.cell_pixel_lifecycle.lock().unwrap();
         let id = self.next_id();
@@ -5740,8 +5752,8 @@ impl Mux {
         let opts = self.surface_options.lock().unwrap().clone();
         let size = self.resolve_client_size(size, (opts.cols, opts.rows));
         let cell_pixels = self.cell_pixel_creation_size();
-        let surface = match resource_identity {
-            Some(identity) => browser::new_surface_with_resource_identity(
+        let surface = match (resource_identity, backend) {
+            (Some(identity), BrowserBackend::Cdp) => browser::new_surface_with_resource_identity(
                 id,
                 url.clone(),
                 size,
@@ -5750,7 +5762,18 @@ impl Mux {
                 Arc::downgrade(self),
                 identity,
             )?,
-            None => browser::new_surface(
+            (Some(identity), BrowserBackend::Native) => {
+                browser::new_native_surface_with_resource_identity(
+                    id,
+                    url.clone(),
+                    size,
+                    cell_pixels,
+                    &opts,
+                    Arc::downgrade(self),
+                    identity,
+                )?
+            }
+            (None, BrowserBackend::Cdp) => browser::new_surface(
                 id,
                 url.clone(),
                 size,
@@ -5758,9 +5781,14 @@ impl Mux {
                 &opts,
                 Arc::downgrade(self),
             )?,
+            (None, BrowserBackend::Native) => {
+                anyhow::bail!("native browser surface requires a durable resource identity")
+            }
         };
         insert_surface_checked(&mut self.state.lock().unwrap(), surface.clone())?;
-        self.start_browser_bootstrap(surface.clone(), BrowserBootstrap::Create { url }, None);
+        if backend == BrowserBackend::Cdp {
+            self.start_browser_bootstrap(surface.clone(), BrowserBootstrap::Create { url }, None);
+        }
         Ok(surface)
     }
 
@@ -9215,6 +9243,18 @@ impl Mux {
         Ok(serde_json::to_string(&snapshot)?)
     }
 
+    /// Execute one local `cmux.protocol/2` request and return its complete response envelope.
+    pub fn local_resource_response_json(
+        self: &Arc<Self>,
+        request_json: &str,
+    ) -> anyhow::Result<Vec<u8>> {
+        let response = match crate::resource_router::handle_resource_message(self, request_json) {
+            Ok(response) => response,
+            Err(error) => crate::resource_router::malformed_resource_response(request_json, error),
+        };
+        Ok(serde_json::to_vec(&response)?)
+    }
+
     fn workspace_slot_by_public_id(&self, public_id: &str) -> anyhow::Result<WorkspaceId> {
         let public_id = WorkspacePublicId::parse(public_id.to_string())?;
         self.with_state(|state| state.resource_indexes.workspaces.get(&public_id).copied())
@@ -10421,6 +10461,7 @@ impl Mux {
         size: Option<(u16, u16)>,
         resource_identity: TabResourceIdentity,
         workspace_key: Option<String>,
+        backend: BrowserBackend,
     ) -> anyhow::Result<Arc<Surface>> {
         self.new_browser_tab_with_resource_identity(
             url,
@@ -10428,6 +10469,7 @@ impl Mux {
             size,
             Some(resource_identity),
             workspace_key,
+            backend,
         )
     }
 
@@ -10438,6 +10480,7 @@ impl Mux {
         size: Option<(u16, u16)>,
         resource_identity: Option<TabResourceIdentity>,
         workspace_key: Option<String>,
+        backend: BrowserBackend,
     ) -> anyhow::Result<Arc<Surface>> {
         let (target, empty_workspace) = {
             let state = self.state.lock().unwrap();
@@ -10465,6 +10508,7 @@ impl Mux {
                     url,
                     size,
                     resource_identity,
+                    backend,
                 );
             }
             let workspace_key = match workspace_key {
@@ -10476,6 +10520,7 @@ impl Mux {
                 size,
                 None,
                 resource_identity,
+                backend,
             )?;
             let (pane_id, pane) = self.make_pane(surface.id)?;
             let screen_id = self.next_id();
@@ -10624,8 +10669,13 @@ impl Mux {
             return Ok(surface);
         };
 
-        let surface =
-            self.spawn_browser_surface_with_resource_identity(url, size, None, resource_identity)?;
+        let surface = self.spawn_browser_surface_with_resource_identity(
+            url,
+            size,
+            None,
+            resource_identity,
+            backend,
+        )?;
         let active_at = self.next_active_at();
         let notifications = self.surface_notifications();
         let attached = {
@@ -10679,6 +10729,7 @@ impl Mux {
         url: String,
         size: Option<(u16, u16)>,
         resource_identity: Option<TabResourceIdentity>,
+        backend: BrowserBackend,
     ) -> anyhow::Result<Arc<Surface>> {
         let lifecycle = self.workspace_lifecycle(workspace);
         let workspace_lifecycle = lifecycle.lock().unwrap();
@@ -10690,6 +10741,7 @@ impl Mux {
             size,
             Some(workspace),
             resource_identity,
+            backend,
         )?;
         let pending_surface = self.pending_workspace_surface(surface.id);
         let notifications = self.surface_notifications();
@@ -15593,10 +15645,12 @@ mod tests {
     use super::*;
     use std::collections::HashMap;
 
+    use crate::browser::{BrowserSource, BrowserStatus};
     use crate::layout::{DEFAULT_VIEWPORT_PANE_WIDTH, VirtualRect};
     use crate::resource::{BrowserPublicId, MachinePublicId, SessionPublicId, TabPublicId};
     use crate::workspace_registry::{
-        RegistryPane, RegistryScreen, RegistryViewportColumn, ResourceChange, ResourcePatch,
+        RegistryBrowserSource, RegistryPane, RegistryScreen, RegistryViewportColumn,
+        ResourceChange, ResourcePatch,
     };
 
     fn test_mux() -> Arc<Mux> {
@@ -15866,9 +15920,9 @@ mod tests {
                     public_id: public_id.clone(),
                     url: tab.browser_url.clone().unwrap(),
                     source: if index % 2 == 0 {
-                        crate::workspace_registry::RegistryBrowserSource::Launched
+                        RegistryBrowserSource::Launched
                     } else {
-                        crate::workspace_registry::RegistryBrowserSource::External
+                        RegistryBrowserSource::External
                     },
                     launch: if index % 2 == 0 {
                         crate::workspace_registry::RegistryBrowserLaunch::Create
@@ -17248,6 +17302,111 @@ mod tests {
         });
         mux.shutdown();
         drop(mux);
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn persistent_native_browser_restart_restores_frontend_owned_surface() {
+        let root = std::env::temp_dir()
+            .join(format!("cmux-native-browser-restart-{}", WorkspacePublicId::random().unwrap()));
+        let session = "native-browser-restart";
+        let first = Mux::from_workspace_registry(
+            session.into(),
+            SurfaceOptions::default(),
+            WorkspaceRegistry::open(&root, session).unwrap(),
+            ProviderWorkspaceState::default(),
+            true,
+        )
+        .unwrap();
+        let created = public_request(
+            &first,
+            "native-browser-create",
+            "tab.create_browser",
+            serde_json::json!({
+                "machine":"current",
+                "session":"current",
+                "url":"https://example.test/initial",
+                "backend":"native",
+            }),
+            Some("native-browser-create"),
+        );
+        let browser_id = BrowserPublicId::parse(
+            created["result"]["value"]["browser_id"].as_str().unwrap().to_string(),
+        )
+        .unwrap();
+        let first_surface_id = first.with_state(|state| {
+            state
+                .single_placement_of_content(&ContentPublicId::Browser(browser_id.clone()))
+                .expect("native browser has one live placement")
+        });
+        let first_surface = first.surface(first_surface_id).unwrap();
+        assert_eq!(first_surface.browser_source(), Some(BrowserSource::Native));
+        let Surface::Browser(first_browser) = first_surface.as_ref() else {
+            panic!("native browser surface changed kind");
+        };
+        assert_eq!(
+            first_browser.take_worker_done_for_test().recv_timeout(Duration::from_millis(50)),
+            Err(std::sync::mpsc::RecvTimeoutError::Disconnected),
+            "native browser must not start a CDP worker",
+        );
+
+        let navigated = public_request(
+            &first,
+            "native-browser-navigate",
+            "browser.navigate",
+            serde_json::json!({
+                "machine":"current",
+                "session":"current",
+                "browser":browser_id,
+                "url":"https://example.test/restored",
+            }),
+            Some("native-browser-navigate"),
+        );
+        assert_eq!(navigated["result"]["value"]["url"], "https://example.test/restored");
+        let before = first.workspace_registry.lock().unwrap().resource_topology_snapshot().unwrap();
+        assert_eq!(before.browsers[0].source, RegistryBrowserSource::Native);
+        assert_eq!(before.browsers[0].reconnect, RegistryBrowserReconnect::Frontend);
+        assert_eq!(before.browsers[0].url, "https://example.test/restored");
+        drop(first_surface);
+        drop(first);
+
+        let reopened = Mux::from_workspace_registry(
+            session.into(),
+            SurfaceOptions::default(),
+            WorkspaceRegistry::open(&root, session).unwrap(),
+            ProviderWorkspaceState::default(),
+            true,
+        )
+        .unwrap();
+        let reopened_surface_id = reopened.with_state(|state| {
+            state
+                .single_placement_of_content(&ContentPublicId::Browser(browser_id.clone()))
+                .expect("native browser placement is restored")
+        });
+        let reopened_surface = reopened.surface(reopened_surface_id).unwrap();
+        assert_eq!(reopened_surface.browser_source(), Some(BrowserSource::Native));
+        assert_eq!(reopened_surface.browser_status(), Some(BrowserStatus::Live));
+        assert_eq!(
+            reopened_surface.browser_url().as_deref(),
+            Some("https://example.test/restored")
+        );
+        let Surface::Browser(reopened_browser) = reopened_surface.as_ref() else {
+            panic!("restored native browser surface changed kind");
+        };
+        assert_eq!(
+            reopened_browser.take_worker_done_for_test().recv_timeout(Duration::from_millis(50)),
+            Err(std::sync::mpsc::RecvTimeoutError::Disconnected),
+            "restored native browser must not start a CDP worker",
+        );
+        let snapshot: Value =
+            serde_json::from_str(&reopened.public_session_snapshot_json().unwrap()).unwrap();
+        assert_eq!(snapshot["browsers"][0]["source"], "native");
+        assert_eq!(snapshot["browsers"][0]["status"], "live");
+        assert_eq!(snapshot["browsers"][0]["url"], "https://example.test/restored");
+
+        reopened.shutdown();
+        drop(reopened_surface);
+        drop(reopened);
         std::fs::remove_dir_all(root).unwrap();
     }
 
@@ -24709,6 +24868,7 @@ mod tests {
                 "about:blank#first".into(),
                 Some((80, 24)),
                 None,
+                BrowserBackend::Cdp,
             )
             .unwrap();
         let events = mux.subscribe();
@@ -24719,6 +24879,7 @@ mod tests {
                 "about:blank#second".into(),
                 Some((80, 24)),
                 None,
+                BrowserBackend::Cdp,
             )
             .unwrap();
 

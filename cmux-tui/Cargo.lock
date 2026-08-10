@@ -202,6 +202,7 @@ version = "0.1.0"
 dependencies = [
  "cmux-tui-core",
  "ghostty-vt",
+ "serde_json",
 ]
 
 [[package]]
@@ -215,7 +216,7 @@ dependencies = [
 
 [[package]]
 name = "cmux-tui"
-version = "0.2.1"
+version = "0.3.0"
 dependencies = [
  "anyhow",
  "base64",

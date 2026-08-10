@@ -739,7 +739,6 @@ pub(crate) fn is_resource_protocol_message(message: &str) -> bool {
         .is_some_and(|object| object.contains_key("protocol"))
 }
 
-#[cfg(test)]
 pub(crate) fn handle_resource_message(
     mux: &Arc<Mux>,
     message: &str,

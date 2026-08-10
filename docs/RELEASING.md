@@ -11,7 +11,7 @@ cmux-windows-v<version>-setup.exe
 cmux-windows-v<version>-setup.exe.sha256
 ```
 
-The installer is self-contained, per-user, and does not require elevation. Public builds are unsigned until the maintainer has an appropriate code-signing identity.
+The installer is self-contained, per-user, and does not require elevation. The outer Setup executable may remain unsigned until the maintainer has an appropriate Authenticode identity. The embedded sparse Explorer package must always be signed; Setup trusts only that package's public certificate in the current user's `TrustedPeople` store and removes it on uninstall.
 
 ## 1. Prepare the version and changelog
 
@@ -47,26 +47,30 @@ The expected engine is `cmux-tui\target\x86_64-pc-windows-gnu\release\cmux_ffi.d
 
 ## 3. Build the installer
 
-Install Inno Setup if necessary:
+Install Visual Studio Build Tools with the x64 C++ toolset and Windows SDK, plus Inno Setup:
 
 ```powershell
 winget install --exact --id JRSoftware.InnoSetup
 ```
 
+The sparse Explorer package needs a private-key signing certificate in `Cert:\CurrentUser\My`. Use the subject of the maintainer-controlled release certificate. `windows\scripts\new-dev-cert.ps1` creates a self-signed certificate for local testing only and is not a substitute for a protected release identity.
+
 Build from the repository root:
 
 ```powershell
-.\windows\scripts\installer.ps1
+.\windows\scripts\installer.ps1 -CertSubject 'CN=<release certificate subject>'
 ```
 
 The script:
 
 1. reads the four-part package version;
-2. publishes the self-contained WinUI application;
-3. copies the release GNU engine beside `CmuxGui.exe`;
-4. includes `LICENSE`, `THIRD_PARTY_LICENSES.md`, and full direct Ghostty/Crossterm/terminput-crossterm license texts in the payload;
-5. compiles the per-user Inno Setup installer;
-6. writes the lowercase SHA-256 sidecar under `windows\dist`.
+2. builds the native x64 `IExplorerCommand` server;
+3. publishes the self-contained WinUI application and copies the release GNU engine beside it;
+4. creates and signs the sparse Explorer identity package, then exports its public certificate into the installer payload;
+5. includes the standalone upstream cmux ICO used explicitly by Start, desktop, uninstall, and classic Explorer entries; installation removes an obsolete `cmux.Windows` full development MSIX before registering the sparse package;
+6. includes `LICENSE`, `THIRD_PARTY_LICENSES.md`, and full direct Ghostty/Crossterm/terminput-crossterm license texts;
+7. compiles the per-user Inno Setup installer;
+8. writes the lowercase SHA-256 sidecar under `windows\dist`.
 
 ## 4. Verify the candidate
 
@@ -76,13 +80,14 @@ Verify at minimum:
 
 - SHA-256 sidecar matches the installer.
 - Install completes without elevation under `%LOCALAPPDATA%\Programs\cmux`.
-- Start menu shortcut launches the GUI.
+- The sparse `cmux.Windows.ShellIntegration` package is registered for the current user and its exact public certificate is present in `CurrentUser\TrustedPeople`.
+- Start menu shortcut launches the GUI, uses `%LOCALAPPDATA%\Programs\cmux\Assets\AppIcon.ico`, and Windows Search lists only that entry; an obsolete `cmux.Windows` full development package must not remain installed.
 - A terminal starts in the expected shell.
 - Workspaces, splits, tabs, keyboard input, and mouse input work.
 - Restart restores topology with fresh shells.
-- Optional Explorer integration opens the selected folder.
+- Enabling Explorer integration places both the new-window and new-workspace commands directly in the Windows 11 context menu and opens the selected folder with the chosen mode; disabling it hides both commands.
 - Upgrade preserves settings and workspace state.
-- Uninstall removes application files and shortcuts but preserves user data.
+- Uninstall removes application files, shortcuts, the sparse package, and its current-user certificate, but preserves user data.
 - Installed `LICENSE`, `THIRD_PARTY_LICENSES.md`, and the four files under `licenses` are present.
 
 Check the sidecar manually:
@@ -109,4 +114,4 @@ Do not describe the build as official, upstream-supported, or published by Manaf
 
 ## Development MSIX
 
-`windows/scripts/package.ps1` and `windows/scripts/new-dev-cert.ps1` build a signed development MSIX using a certificate in the current user's certificate store. This is not the public release path. Never commit a private key or `.pfx` file.
+`windows/scripts/package.ps1` and `windows/scripts/new-dev-cert.ps1` build a signed development MSIX using a certificate in the current user's certificate store. The development MSIX contains the same native Explorer command directly; it does not use the sparse companion package. This is not the public release path. Never commit a private key or `.pfx` file.

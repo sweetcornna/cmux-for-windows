@@ -34,9 +34,6 @@ public sealed class AppSettings
     /// <summary>Terminal background alpha, 0.0 fully transparent to 1.0 opaque.</summary>
     public double TerminalOpacity { get; set; } = 1.0;
 
-    /// <summary>Acrylic blur strength, 0.0 to 1.0. Only meaningful for Acrylic.</summary>
-    public double BlurAmount { get; set; } = 0.5;
-
     // ---- Terminal surface ----
 
     /// <summary>Terminal background override, "#RRGGBB"; empty uses the theme.</summary>
@@ -147,9 +144,38 @@ public sealed class AppSettings
     /// <summary>Raised after any setting changes, so open surfaces can repaint.</summary>
     public static event Action? Changed;
 
+    private System.Threading.Timer? _saveTimer;
+
     public void NotifyChanged()
     {
-        Save();
         Changed?.Invoke();
+        _saveTimer ??= new System.Threading.Timer(
+            _ => Save(),
+            null,
+            System.Threading.Timeout.Infinite,
+            System.Threading.Timeout.Infinite);
+        _saveTimer.Change(300, System.Threading.Timeout.Infinite);
+    }
+
+    public void ResetAppearance()
+    {
+        var defaults = new AppSettings();
+        Theme = defaults.Theme;
+        Backdrop = defaults.Backdrop;
+        TerminalOpacity = defaults.TerminalOpacity;
+        TerminalBackground = defaults.TerminalBackground;
+        TerminalForeground = defaults.TerminalForeground;
+        BackgroundImagePath = defaults.BackgroundImagePath;
+        BackgroundImageOpacity = defaults.BackgroundImageOpacity;
+        TerminalMaskColor = defaults.TerminalMaskColor;
+        TerminalMaskOpacity = defaults.TerminalMaskOpacity;
+        AppBackgroundColor = defaults.AppBackgroundColor;
+        AppImagePath = defaults.AppImagePath;
+        AppImageOpacity = defaults.AppImageOpacity;
+        AppMaskColor = defaults.AppMaskColor;
+        AppMaskOpacity = defaults.AppMaskOpacity;
+        AccentColor = defaults.AccentColor;
+        AppTheme = string.Empty;
+        NotifyChanged();
     }
 }

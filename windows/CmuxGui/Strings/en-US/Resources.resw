@@ -116,10 +116,10 @@
     <value>None</value>
   </data>
   <data name="ContextMenu_OpenWindow" xml:space="preserve">
-    <value>Open in cmux</value>
+    <value>Open in new cmux window</value>
   </data>
   <data name="ContextMenu_OpenWorkspace" xml:space="preserve">
-    <value>Open as cmux workspace</value>
+    <value>Open in new cmux workspace</value>
   </data>
   <data name="Settings_ContextMenuFailed" xml:space="preserve">
     <value>Could not update the context menu. See the log for details.</value>
@@ -187,13 +187,94 @@
   <data name="Pane_Terminal" xml:space="preserve">
     <value>Terminal</value>
   </data>
+  <data name="Terminal_Exited" xml:space="preserve">
+    <value>exited</value>
+  </data>
   <data name="Pane_Browser" xml:space="preserve">
     <value>Browser</value>
   </data>
   <data name="Pane_Pane" xml:space="preserve">
     <value>Pane</value>
   </data>
-  <data name="Pane_BrowserUnavailable" xml:space="preserve">
-    <value>Browser panes are not available in the Windows frontend yet.</value>
+  <data name="Screen_Screen" xml:space="preserve">
+    <value>Screen</value>
+  </data>
+  <data name="Screen_New" xml:space="preserve">
+    <value>New screen</value>
+  </data>
+  <data name="Screen_Rename" xml:space="preserve">
+    <value>Rename screen</value>
+  </data>
+  <data name="Screen_Close" xml:space="preserve">
+    <value>Close screen</value>
+  </data>
+  <data name="Workspace_Rename" xml:space="preserve">
+    <value>Rename workspace</value>
+  </data>
+  <data name="Workspace_MoveUp" xml:space="preserve">
+    <value>Move up</value>
+  </data>
+  <data name="Workspace_MoveDown" xml:space="preserve">
+    <value>Move down</value>
+  </data>
+  <data name="Action_Save" xml:space="preserve">
+    <value>Save</value>
+  </data>
+  <data name="Action_Cancel" xml:space="preserve">
+    <value>Cancel</value>
+  </data>
+  <data name="Pane_NewBrowser" xml:space="preserve">
+    <value>New browser</value>
+  </data>
+  <data name="Pane_BrowserStarting" xml:space="preserve">
+    <value>Starting browser…</value>
+  </data>
+  <data name="Pane_Zoom" xml:space="preserve">
+    <value>Toggle pane zoom</value>
+  </data>
+  <data name="Pane_Rename" xml:space="preserve">
+    <value>Rename pane</value>
+  </data>
+  <data name="Tab_Rename" xml:space="preserve">
+    <value>Rename tab</value>
+  </data>
+  <data name="Tab_MoveLeft" xml:space="preserve">
+    <value>Move left</value>
+  </data>
+  <data name="Tab_MoveRight" xml:space="preserve">
+    <value>Move right</value>
+  </data>
+  <data name="Tab_MoveToPane" xml:space="preserve">
+    <value>Move to pane</value>
+  </data>
+  <data name="Tab_Close" xml:space="preserve">
+    <value>Close tab</value>
+  </data>
+  <data name="Browser_Address" xml:space="preserve">
+    <value>Enter an address</value>
+  </data>
+  <data name="Browser_Error" xml:space="preserve">
+    <value>Browser error</value>
+  </data>
+  <data name="Browser_Back" xml:space="preserve">
+    <value>Back</value>
+  </data>
+  <data name="Browser_Forward" xml:space="preserve">
+    <value>Forward</value>
+  </data>
+  <data name="Browser_Reload" xml:space="preserve">
+    <value>Reload</value>
+  </data>
+  <data name="Browser_Go" xml:space="preserve">
+    <value>Go</value>
+  </data>
+  <data name="Browser_Open" xml:space="preserve">
+    <value>Open</value>
+  </data>
+  <data name="Settings_Accent" xml:space="preserve">
+    <value>Accent color</value>
+  </data>
+  <data name="Settings_ResetAppearance" xml:space="preserve">
+    <value>Reset appearance to system and Ghostty defaults</value>
   </data>
 </root>

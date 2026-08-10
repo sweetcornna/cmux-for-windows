@@ -851,6 +851,7 @@ fn public_browser_snapshot(
         .unwrap_or_else(|| match durable.source {
             RegistryBrowserSource::External => "external",
             RegistryBrowserSource::Launched => "launched",
+            RegistryBrowserSource::Native => "native",
             RegistryBrowserSource::Unknown => match durable.launch {
                 RegistryBrowserLaunch::Create => "launched",
                 RegistryBrowserLaunch::Adopted => "external",

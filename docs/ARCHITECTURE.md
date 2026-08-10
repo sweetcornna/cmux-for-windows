@@ -6,12 +6,14 @@ cmux for Windows is a native frontend over a Rust terminal-multiplexer engine. T
 
 ```text
 CmuxGui.exe (WinUI 3 / C#)
-        |
-        | stable C ABI via P/Invoke
-        v
+   |          |
+   |          +-- WebView2 browser controls
+   |
+   | stable C ABI via P/Invoke
+   v
 cmux_ffi.dll (Rust, x86_64-pc-windows-gnu)
-        |
-        v
+   |
+   v
 cmux-tui-core
    |          |
    |          +-- Ghostty VT parser and terminal state
@@ -22,7 +24,7 @@ The standalone `cmux-tui.exe` uses the same core directly and exposes the local 
 
 ## Frontend boundary
 
-`windows/CmuxGui` renders the application shell, workspace navigation, pane layout, tabs, terminal canvas, settings, localization, and Explorer integration. It calls `cmux_ffi.dll` through declarations in `windows/CmuxGui/Interop/CmuxNative.cs`.
+`windows/CmuxGui` renders the application shell, workspace and screen navigation, pane layout, tabs, the Win2D terminal canvas, WebView2 browser controls, settings, localization, and Explorer integration. It calls `cmux_ffi.dll` through declarations in `windows/CmuxGui/Interop/CmuxNative.cs`.
 
 The FFI layer converts the native GUI's requests into core mutations and serializes snapshots that the C# layer can consume. Native allocations crossing the ABI must be released by the matching FFI function; do not free Rust-owned memory from C#.
 
@@ -34,10 +36,11 @@ The FFI layer converts the native GUI's requests into core mutations and seriali
 - screens and split trees;
 - panes and pane tabs;
 - terminal identities and lifecycle;
-- active workspace, pane, and tab selection;
+- browser identities and durable navigation metadata;
+- active workspace, screen, pane, and tab selection;
 - durable mutation records.
 
-The WinUI frontend projects a core snapshot into controls. Actions such as split, close, select, or create are sent back by stable public resource ID. After a mutation, the GUI reconciles from the resulting core state. It must not persist a second workspace or pane topology.
+The WinUI frontend projects a core snapshot into controls. Actions such as split, close, select, or create are sent back by stable public resource ID. After a mutation, the GUI reconciles from the resulting core state. It must not persist a second workspace or pane topology. Periodic volatile status updates reuse the existing terminal, browser, tab, and pane controls; only structural topology changes rebuild the workspace layout. Reused terminal controls receive a one-shot post-arrange grid synchronization and forced snapshot repaint after reparenting so the Win2D backing surface matches the final pane size. A terminal host joins the tab tree before its `CanvasControl`; the canvas is attached only after the selected host finishes loading, avoiding WinUI's unmatched early unload event that otherwise prevents Win2D resource creation.
 
 ## Terminal lifecycle
 
@@ -52,6 +55,12 @@ Workspace topology is durable; process state is not. After the GUI exits:
 
 The default shell search order is `pwsh.exe`, `powershell.exe`, then `cmd.exe`.
 
+## Browser lifecycle
+
+The Rust core owns each browser's stable resource ID, tab placement, current URL, and durable topology. The WinUI frontend owns the live WebView2 control and sends completed navigation URLs back through the same stable-ID mutation boundary. Browser controls are reused while topology is reconciled, so navigation history and page state survive unrelated sidebar and layout updates during the current process.
+
+WebView2 state and browsing history are live frontend state. Restart restores the browser tab and its last durable URL, not the previous WebView process, in-page state, form data, or back/forward history. The standalone TUI retains its separate experimental Chrome DevTools Protocol transport; the native GUI does not require a Chrome debug profile.
+
 ## Storage
 
 | Data | Default location | Lifetime |
@@ -61,19 +70,23 @@ The default shell search order is `pwsh.exe`, `powershell.exe`, then `cmd.exe`.
 | TUI config | `%APPDATA%\cmux\cmux-tui.json` | User managed |
 | GUI diagnostics | `%LOCALAPPDATA%\cmux-gui.log` | Append-only until the user removes it |
 | Local control sockets | `%TEMP%\cmux-tui-<user>` | Runtime data |
-| Browser profile, when used | `%LOCALAPPDATA%\cmux-tui\chrome-profile` | Persistent experimental data |
+| TUI Chrome debug profile, when the experimental CDP transport is used | `%LOCALAPPDATA%\cmux-tui\chrome-profile` | Persistent TUI-only data |
 
 `CMUX_TUI_STATE_DIR` overrides the workspace-state root. `CMUX_TUI_CONFIG` overrides the TUI configuration path.
 
 ## GUI session restoration
 
-The native GUI opens the persistent `cmux-gui` session. Its registry is stored beneath the normal session state root using a stable session hash. Closing the main window disposes live terminal views while preserving the core topology. Closing a pane tab or workspace is a durable delete and therefore changes what appears on the next launch.
+The native GUI opens the persistent `cmux-gui` session. Its registry is stored beneath the normal session state root using a stable session hash. Closing the main window disposes live terminal and browser views while preserving the core topology. Closing a pane tab, screen, or workspace is a durable delete and therefore changes what appears on the next launch.
 
-A folder passed through Explorer integration applies only to the newly created workspace for that launch. It is not a promise to restore the previous process working directory later.
+A folder passed through Explorer's new-workspace command is forwarded to the running main instance and creates a workspace there. The new-window command opens an independent transient mux that does not create a durable session registry. A launch folder applies only to the newly created workspace for that launch; it is not a promise to restore the previous process working directory later.
 
 ## Configuration and themes
 
 The GUI stores application settings separately from the TUI configuration. Bundled Ghostty-format themes ship with the frontend, while user themes under `%APPDATA%\ghostty\themes` take priority. Ghostty configuration discovery is read-only; cmux does not require a Ghostty installation.
+
+`AppSettings` composes the selected theme and terminal foreground/background overrides into a Ghostty-format fragment. The frontend sends that fragment once to the Rust mux, whose `DefaultColors` update every existing surface and become the defaults for future surfaces. Sending an empty fragment reloads the user Ghostty configuration and built-in defaults, so Follow config and reset operations also update already-open terminals.
+
+The application accent is a shared mutable `SolidColorBrush` initialized after the first window's XAML tree exists. Explicitly supported shell actions and settings controls retain that brush instance, so changing its color repaints them immediately without replacing WinUI resource dictionaries or forcing a theme transition.
 
 ## Security boundaries
 

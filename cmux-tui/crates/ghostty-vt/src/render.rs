@@ -149,6 +149,7 @@ pub struct RenderFrame {
     pub cursor_color: Option<Rgb>,
     pub default_colors: (Rgb, Rgb),
     pub dirty_rows: Vec<u16>,
+    pub wrapped_rows: Vec<bool>,
     pub kitty_graphics: Arc<KittyGraphicsSnapshot>,
     pub kitty_graphics_delta: Arc<KittyGraphicsFrameDelta>,
     rows: Vec<Vec<Cell>>,
@@ -211,6 +212,10 @@ impl RenderFrame {
     /// One viewport row from this immutable snapshot.
     pub fn styled_row(&self, row: u16) -> Option<&[Cell]> {
         self.rows.get(row as usize).map(Vec::as_slice)
+    }
+
+    pub fn row_wrapped(&self, row: usize) -> bool {
+        self.wrapped_rows.get(row).copied().unwrap_or(false)
     }
 
     /// Assemble all snapshot rows into protocol-v7 runs.
@@ -475,9 +480,11 @@ impl RenderState {
         let default_colors = self.default_colors();
         let mut rows = Vec::with_capacity(size.1 as usize);
         let mut dirty_rows = Vec::new();
+        let mut wrapped_rows = Vec::with_capacity(size.1 as usize);
 
-        self.walk_rows(|row, row_dirty, cells| {
+        self.walk_rows_with_metadata(|row, row_dirty, wrapped, cells| {
             rows.push(cells.to_vec());
+            wrapped_rows.push(wrapped);
             if row_dirty {
                 dirty_rows.push(row as u16);
             }
@@ -499,6 +506,7 @@ impl RenderState {
             cursor_color,
             default_colors,
             dirty_rows,
+            wrapped_rows,
             kitty_graphics: self.kitty_graphics.clone(),
             kitty_graphics_delta: self.kitty_graphics_delta.clone(),
             rows,
@@ -509,6 +517,13 @@ impl RenderState {
     /// the row index, the row's dirty flag, and its cells. Row dirty flags
     /// are cleared as part of the walk.
     pub fn walk_rows(&mut self, mut f: impl FnMut(usize, bool, &[Cell])) -> Result<()> {
+        self.walk_rows_with_metadata(|row, dirty, _, cells| f(row, dirty, cells))
+    }
+
+    fn walk_rows_with_metadata(
+        &mut self,
+        mut f: impl FnMut(usize, bool, bool, &[Cell]),
+    ) -> Result<()> {
         check(unsafe {
             sys::ghostty_render_state_get(
                 self.raw,
@@ -520,13 +535,30 @@ impl RenderState {
         let mut row_index = 0usize;
         while unsafe { sys::ghostty_render_state_row_iterator_next(self.rows) } {
             let mut dirty = false;
-            unsafe {
+            check(unsafe {
                 sys::ghostty_render_state_row_get(
                     self.rows,
                     sys::GHOSTTY_RENDER_STATE_ROW_DATA_DIRTY,
                     &mut dirty as *mut _ as *mut c_void,
-                );
-            }
+                )
+            })?;
+
+            let mut raw = sys::GhosttyRow::default();
+            check(unsafe {
+                sys::ghostty_render_state_row_get(
+                    self.rows,
+                    sys::GHOSTTY_RENDER_STATE_ROW_DATA_RAW,
+                    &mut raw as *mut _ as *mut c_void,
+                )
+            })?;
+            let mut wrapped = false;
+            check(unsafe {
+                sys::ghostty_row_get(
+                    raw,
+                    sys::GHOSTTY_ROW_DATA_WRAP,
+                    &mut wrapped as *mut _ as *mut c_void,
+                )
+            })?;
 
             check(unsafe {
                 sys::ghostty_render_state_row_get(
@@ -550,16 +582,16 @@ impl RenderState {
 
             if dirty {
                 let clean = false;
-                unsafe {
+                check(unsafe {
                     sys::ghostty_render_state_row_set(
                         self.rows,
                         sys::GHOSTTY_RENDER_STATE_ROW_OPTION_DIRTY,
                         &clean as *const _ as *const c_void,
-                    );
-                }
+                    )
+                })?;
             }
 
-            f(row_index, dirty, &self.row_buf);
+            f(row_index, dirty, wrapped, &self.row_buf);
             row_index += 1;
         }
         Ok(())

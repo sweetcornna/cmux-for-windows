@@ -1,11 +1,14 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Text.Json;
 using CmuxGui.Services;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
+using Microsoft.UI.Xaml.Controls.Primitives;
 using Microsoft.UI.Xaml.Input;
 using Microsoft.UI.Xaml.Media;
+using Windows.System;
 
 namespace CmuxGui.Controls;
 
@@ -13,11 +16,17 @@ internal sealed class WorkspaceView : UserControl, IDisposable
 {
     private readonly MuxRuntime _mux;
     private readonly Dictionary<string, TerminalView> _terminals = [];
+    private readonly Dictionary<string, BrowserView> _browsers = [];
+    private readonly Dictionary<string, TabViewItem> _tabItems = [];
     private readonly Dictionary<string, Border> _paneBorders = [];
+    private readonly HashSet<string> _renderedTerminals = [];
+    private readonly HashSet<string> _renderedBrowsers = [];
     private bool _rendering;
     private bool _disposed;
     private string? _activePaneId;
     private TerminalView? _selectedTerminal;
+    private MuxSnapshot? _snapshot;
+    private string _renderKey = string.Empty;
 
     public WorkspaceView(MuxRuntime mux, MuxRuntime.WorkspaceInfo workspace)
     {
@@ -25,18 +34,72 @@ internal sealed class WorkspaceView : UserControl, IDisposable
         Workspace = workspace;
         HorizontalContentAlignment = HorizontalAlignment.Stretch;
         VerticalContentAlignment = VerticalAlignment.Stretch;
+        AddAccelerator(VirtualKey.Left, "left");
+        AddAccelerator(VirtualKey.Right, "right");
+        AddAccelerator(VirtualKey.Up, "up");
+        AddAccelerator(VirtualKey.Down, "down");
+
+        var zoom = new KeyboardAccelerator
+        {
+            Key = VirtualKey.Enter,
+            Modifiers = VirtualKeyModifiers.Control | VirtualKeyModifiers.Shift,
+        };
+        zoom.Invoked += (_, args) =>
+        {
+            if (_activePaneId is not null)
+            {
+                Mutate(() => _mux.ZoomPane(_activePaneId), $"zoom pane {_activePaneId}");
+                args.Handled = true;
+            }
+        };
+        KeyboardAccelerators.Add(zoom);
+    }
+
+    private void AddAccelerator(VirtualKey key, string direction)
+    {
+        var accelerator = new KeyboardAccelerator
+        {
+            Key = key,
+            Modifiers = VirtualKeyModifiers.Control | VirtualKeyModifiers.Menu,
+        };
+        accelerator.Invoked += (_, args) =>
+        {
+            if (_activePaneId is not null)
+            {
+                Mutate(
+                    () => _mux.FocusPaneDirection(_activePaneId, direction),
+                    $"focus {direction} from {_activePaneId}");
+                args.Handled = true;
+            }
+        };
+        KeyboardAccelerators.Add(accelerator);
     }
 
     public MuxRuntime.WorkspaceInfo Workspace { get; }
 
     public void Render(MuxSnapshot snapshot)
     {
+        var renderKey = BuildRenderKey(snapshot);
+        if (renderKey == _renderKey)
+        {
+            UpdateStatus(snapshot);
+            return;
+        }
+
         _rendering = true;
         try
         {
-            DisposeTerminals();
+            _snapshot = snapshot;
+            _renderedTerminals.Clear();
+            _renderedBrowsers.Clear();
+            foreach (var item in _tabItems.Values)
+            {
+                item.Content = null;
+            }
+            _tabItems.Clear();
             _paneBorders.Clear();
             _selectedTerminal = null;
+            Content = null;
 
             var screens = snapshot.Screens
                 .Where(screen => screen.WorkspaceId == Workspace.PublicId)
@@ -48,6 +111,8 @@ internal sealed class WorkspaceView : UserControl, IDisposable
             {
                 _activePaneId = null;
                 Content = BuildEmptyWorkspace();
+                DisposeUnrenderedViews();
+                _renderKey = renderKey;
                 return;
             }
 
@@ -60,12 +125,21 @@ internal sealed class WorkspaceView : UserControl, IDisposable
                 .ToDictionary(tab => tab.Id, StringComparer.Ordinal);
             var terminals = snapshot.Terminals
                 .ToDictionary(terminal => terminal.Id, StringComparer.Ordinal);
+            var browsers = snapshot.Browsers
+                .ToDictionary(browser => browser.Id, StringComparer.Ordinal);
             _activePaneId = screen.Layout.ActivePaneId;
 
-            Content = !string.IsNullOrWhiteSpace(screen.Layout.ZoomedPaneId)
-                ? BuildPane(screen.Layout.ZoomedPaneId!, tabs, terminals)
-                : BuildNode(screen.Layout.Root, tabs, terminals);
+            var body = !string.IsNullOrWhiteSpace(screen.Layout.ZoomedPaneId)
+                ? BuildPane(screen.Layout.ZoomedPaneId!, tabs, terminals, browsers)
+                : BuildNode(screen.Layout.Root, tabs, terminals, browsers);
+            Content = BuildScreenLayout(screens, screen, body);
+            foreach (var tabId in _renderedTerminals)
+            {
+                _terminals[tabId].NotifyHostReparented();
+            }
+            DisposeUnrenderedViews();
             UpdatePaneFocus();
+            _renderKey = renderKey;
         }
         finally
         {
@@ -73,26 +147,193 @@ internal sealed class WorkspaceView : UserControl, IDisposable
         }
     }
 
+    private string BuildRenderKey(MuxSnapshot snapshot)
+    {
+        var screens = snapshot.Screens
+            .Where(screen => screen.WorkspaceId == Workspace.PublicId)
+            .OrderBy(screen => screen.Index)
+            .ThenBy(screen => screen.Id)
+            .ToList();
+        var screenIds = screens.Select(screen => screen.Id).ToHashSet(StringComparer.Ordinal);
+        var panes = snapshot.Panes
+            .Where(pane => screenIds.Contains(pane.ScreenId))
+            .OrderBy(pane => pane.Id)
+            .ToList();
+        var paneIds = panes.Select(pane => pane.Id).ToHashSet(StringComparer.Ordinal);
+        var tabs = snapshot.Tabs
+            .Where(tab => paneIds.Contains(tab.PaneId))
+            .OrderBy(tab => tab.PaneId)
+            .ThenBy(tab => tab.Index)
+            .ThenBy(tab => tab.Id)
+            .ToList();
+        var contentIds = tabs.Select(tab => tab.ContentId).ToHashSet(StringComparer.Ordinal);
+
+        return JsonSerializer.Serialize(new
+        {
+            Screens = screens,
+            Panes = panes,
+            Tabs = tabs,
+            Terminals = snapshot.Terminals
+                .Where(terminal => contentIds.Contains(terminal.Id))
+                .Select(terminal => terminal.Id)
+                .OrderBy(id => id),
+            Browsers = snapshot.Browsers
+                .Where(browser => contentIds.Contains(browser.Id))
+                .Select(browser => new { browser.Id, browser.TabId, browser.Source })
+                .OrderBy(browser => browser.Id),
+        });
+    }
+
     public void FocusSelectedTerminal(string reason) =>
         _selectedTerminal?.FocusTerminal(reason);
+
+    public void UpdateStatus(MuxSnapshot snapshot)
+    {
+        _snapshot = snapshot;
+        var terminals = snapshot.Terminals
+            .ToDictionary(terminal => terminal.Id, StringComparer.Ordinal);
+        var browsers = snapshot.Browsers
+            .ToDictionary(browser => browser.Id, StringComparer.Ordinal);
+        foreach (var tab in snapshot.Tabs)
+        {
+            _browsers.TryGetValue(tab.Id, out var browserView);
+            if (browserView is not null
+                && browsers.TryGetValue(tab.ContentId, out var browserSnapshot))
+            {
+                browserView.Update(browserSnapshot);
+            }
+            if (_tabItems.TryGetValue(tab.Id, out var item))
+            {
+                item.Header = TabTitle(tab, terminals, browsers, browserView?.DocumentTitle);
+            }
+        }
+    }
+
+    private void UpdateBrowserTitle(string tabId, BrowserView browser)
+    {
+        if (_snapshot is null
+            || !_tabItems.TryGetValue(tabId, out var item)
+            || _snapshot.Tabs.FirstOrDefault(tab => tab.Id == tabId) is not { } tab)
+        {
+            return;
+        }
+        var terminals = _snapshot.Terminals
+            .ToDictionary(terminal => terminal.Id, StringComparer.Ordinal);
+        var browsers = _snapshot.Browsers
+            .ToDictionary(snapshot => snapshot.Id, StringComparer.Ordinal);
+        item.Header = TabTitle(tab, terminals, browsers, browser.DocumentTitle);
+    }
+
+    private FrameworkElement BuildScreenLayout(
+        IReadOnlyList<ScreenSnapshot> screens,
+        ScreenSnapshot selectedScreen,
+        FrameworkElement body)
+    {
+        var root = new Grid();
+        root.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+        root.RowDefinitions.Add(new RowDefinition { Height = new GridLength(1, GridUnitType.Star) });
+
+        var header = new StackPanel
+        {
+            Orientation = Orientation.Horizontal,
+            Spacing = 4,
+            Margin = new Thickness(4, 0, 8, 4),
+        };
+        var selector = new ComboBox
+        {
+            MinWidth = 180,
+            HorizontalAlignment = HorizontalAlignment.Left,
+        };
+        ComboBoxItem? selected = null;
+        foreach (var screen in screens)
+        {
+            var item = new ComboBoxItem
+            {
+                Content = ScreenTitle(screen),
+                Tag = screen.Id,
+            };
+            selector.Items.Add(item);
+            if (screen.Id == selectedScreen.Id)
+            {
+                selected = item;
+            }
+        }
+        selector.SelectedItem = selected;
+        selector.SelectionChanged += (_, _) =>
+        {
+            if (_rendering || selector.SelectedItem is not ComboBoxItem { Tag: string screenId })
+            {
+                return;
+            }
+            Mutate(() => _mux.FocusScreen(screenId), $"focus screen {screenId}");
+        };
+        header.Children.Add(selector);
+        header.Children.Add(ActionButton(
+            ActionGlyph("\uE710"),
+            "Screen_New",
+            () => Mutate(
+                () => _mux.CreateScreen(Workspace.PublicId),
+                $"create screen in {Workspace.PublicId}")));
+        header.Children.Add(ActionButton(
+            ActionGlyph("\uE8AC"),
+            "Screen_Rename",
+            () => _ = RenameScreenAsync(selectedScreen)));
+        header.Children.Add(ActionButton(
+            ActionGlyph("\uE74D"),
+            "Screen_Close",
+            () => Mutate(
+                () => _mux.CloseScreen(selectedScreen.Id),
+                $"close screen {selectedScreen.Id}")));
+        root.Children.Add(header);
+        Grid.SetRow(body, 1);
+        root.Children.Add(body);
+        return root;
+    }
+
+    private async System.Threading.Tasks.Task RenameScreenAsync(ScreenSnapshot screen)
+    {
+        var name = new TextBox { Text = screen.Name ?? string.Empty };
+        name.SelectAll();
+        var dialog = new ContentDialog
+        {
+            XamlRoot = XamlRoot,
+            Title = Loc.S("Screen_Rename"),
+            Content = name,
+            PrimaryButtonText = Loc.S("Action_Save"),
+            CloseButtonText = Loc.S("Action_Cancel"),
+            DefaultButton = ContentDialogButton.Primary,
+        };
+        if (await dialog.ShowAsync() == ContentDialogResult.Primary)
+        {
+            var value = string.IsNullOrWhiteSpace(name.Text) ? null : name.Text.Trim();
+            Mutate(() => _mux.RenameScreen(screen.Id, value), $"rename screen {screen.Id}");
+        }
+    }
+
+    private static string ScreenTitle(ScreenSnapshot screen) =>
+        string.IsNullOrWhiteSpace(screen.Name)
+            ? $"{Loc.S("Screen_Screen")} {screen.Index + 1}"
+            : screen.Name;
 
     private FrameworkElement BuildNode(
         LayoutNodeSnapshot node,
         IReadOnlyDictionary<string, TabSnapshot> tabs,
-        IReadOnlyDictionary<string, TerminalSnapshot> terminals) => node.Kind switch
+        IReadOnlyDictionary<string, TerminalSnapshot> terminals,
+        IReadOnlyDictionary<string, BrowserSnapshot> browsers) => node.Kind switch
     {
-        "leaf" when node.PaneId is not null => BuildPane(node.PaneId, tabs, terminals),
+        "leaf" when node.PaneId is not null => BuildPane(node.PaneId, tabs, terminals, browsers),
         "split" when node.First is not null && node.Second is not null =>
-            BuildSplit(node, tabs, terminals),
-        "viewport" => BuildViewport(node, tabs, terminals),
-        "stack" => BuildStack(node, tabs, terminals),
+            BuildSplit(node, tabs, terminals, browsers),
+        "viewport" => BuildViewport(node, tabs, terminals, browsers),
+        "stack" => BuildStack(node, tabs, terminals, browsers),
         _ => BuildUnavailable(Loc.S("Pane_Empty")),
     };
 
     private FrameworkElement BuildSplit(
         LayoutNodeSnapshot node,
         IReadOnlyDictionary<string, TabSnapshot> tabs,
-        IReadOnlyDictionary<string, TerminalSnapshot> terminals)
+        IReadOnlyDictionary<string, TerminalSnapshot> terminals,
+        IReadOnlyDictionary<string, BrowserSnapshot> browsers)
     {
         var horizontal = node.Direction == "horizontal";
         var ratio = Math.Clamp(node.Ratio, 0.05, 0.95);
@@ -100,33 +341,112 @@ internal sealed class WorkspaceView : UserControl, IDisposable
         if (horizontal)
         {
             grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(ratio, GridUnitType.Star) });
+            grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(5) });
             grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1 - ratio, GridUnitType.Star) });
         }
         else
         {
             grid.RowDefinitions.Add(new RowDefinition { Height = new GridLength(ratio, GridUnitType.Star) });
+            grid.RowDefinitions.Add(new RowDefinition { Height = new GridLength(5) });
             grid.RowDefinitions.Add(new RowDefinition { Height = new GridLength(1 - ratio, GridUnitType.Star) });
         }
 
-        var first = BuildNode(node.First!, tabs, terminals);
-        var second = BuildNode(node.Second!, tabs, terminals);
+        var first = BuildNode(node.First!, tabs, terminals, browsers);
+        var second = BuildNode(node.Second!, tabs, terminals, browsers);
+        var divider = BuildSplitDivider(grid, node, horizontal);
         grid.Children.Add(first);
+        grid.Children.Add(divider);
         grid.Children.Add(second);
         if (horizontal)
         {
-            Grid.SetColumn(second, 1);
+            Grid.SetColumn(divider, 1);
+            Grid.SetColumn(second, 2);
         }
         else
         {
-            Grid.SetRow(second, 1);
+            Grid.SetRow(divider, 1);
+            Grid.SetRow(second, 2);
         }
         return grid;
+    }
+
+    private FrameworkElement BuildSplitDivider(Grid grid, LayoutNodeSnapshot node, bool horizontal)
+    {
+        var divider = new Grid();
+        divider.Children.Add(new Border
+        {
+            Background = Application.Current.Resources["CardStrokeColorDefaultBrush"] as Brush,
+            Width = horizontal ? 1 : double.NaN,
+            Height = horizontal ? double.NaN : 1,
+            HorizontalAlignment = HorizontalAlignment.Center,
+            VerticalAlignment = VerticalAlignment.Center,
+        });
+        var thumb = new Thumb
+        {
+            Background = new SolidColorBrush(Microsoft.UI.Colors.Transparent),
+        };
+        Microsoft.UI.Xaml.Automation.AutomationProperties.SetAutomationId(
+            thumb,
+            $"SplitDivider_{node.SplitId}");
+        divider.Children.Add(thumb);
+
+        var ratio = node.Ratio;
+        thumb.DragDelta += (_, args) =>
+        {
+            var extent = horizontal ? grid.ActualWidth : grid.ActualHeight;
+            var change = horizontal ? args.HorizontalChange : args.VerticalChange;
+            ratio = Math.Clamp(ratio + change / Math.Max(1, extent), 0.05, 0.95);
+            if (horizontal)
+            {
+                grid.ColumnDefinitions[0].Width = new GridLength(ratio, GridUnitType.Star);
+                grid.ColumnDefinitions[2].Width = new GridLength(1 - ratio, GridUnitType.Star);
+            }
+            else
+            {
+                grid.RowDefinitions[0].Height = new GridLength(ratio, GridUnitType.Star);
+                grid.RowDefinitions[2].Height = new GridLength(1 - ratio, GridUnitType.Star);
+            }
+        };
+        thumb.DragCompleted += (_, _) =>
+        {
+            var paneId = FirstPaneId(node.First!);
+            if (paneId is not null && node.SplitId is not null)
+            {
+                Mutate(
+                    () => _mux.SetSplitRatio(paneId, node.SplitId, ratio),
+                    $"resize split {node.SplitId}");
+            }
+        };
+        return divider;
+    }
+
+    private static string? FirstPaneId(LayoutNodeSnapshot node)
+    {
+        if (node.PaneId is not null)
+        {
+            return node.PaneId;
+        }
+        if (node.PaneIds.Count > 0)
+        {
+            return node.PaneIds[0];
+        }
+        foreach (var column in node.Columns)
+        {
+            if (FirstPaneId(column.Root) is { } pane)
+            {
+                return pane;
+            }
+        }
+        return node.First is not null && FirstPaneId(node.First) is { } first
+            ? first
+            : node.Second is not null ? FirstPaneId(node.Second) : null;
     }
 
     private FrameworkElement BuildViewport(
         LayoutNodeSnapshot node,
         IReadOnlyDictionary<string, TabSnapshot> tabs,
-        IReadOnlyDictionary<string, TerminalSnapshot> terminals)
+        IReadOnlyDictionary<string, TerminalSnapshot> terminals,
+        IReadOnlyDictionary<string, BrowserSnapshot> browsers)
     {
         if (node.Columns.Count == 0)
         {
@@ -138,19 +458,91 @@ internal sealed class WorkspaceView : UserControl, IDisposable
             var column = node.Columns[index];
             grid.ColumnDefinitions.Add(new ColumnDefinition
             {
-                Width = new GridLength(Math.Max(0.05, column.Width), GridUnitType.Star),
+                Width = new GridLength(Math.Max(1, column.Width), GridUnitType.Star),
             });
-            var content = BuildNode(column.Root, tabs, terminals);
-            Grid.SetColumn(content, index);
+            var content = BuildNode(column.Root, tabs, terminals, browsers);
+            Grid.SetColumn(content, index * 2);
             grid.Children.Add(content);
+            if (index == node.Columns.Count - 1)
+            {
+                continue;
+            }
+            grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(5) });
+            var divider = BuildViewportDivider(grid, node, index);
+            Grid.SetColumn(divider, index * 2 + 1);
+            grid.Children.Add(divider);
         }
         return grid;
+    }
+
+    private FrameworkElement BuildViewportDivider(Grid grid, LayoutNodeSnapshot node, int index)
+    {
+        var divider = new Border
+        {
+            Background = new SolidColorBrush(Microsoft.UI.Colors.Transparent),
+            Child = new Border
+            {
+                Background = Application.Current.Resources["CardStrokeColorDefaultBrush"] as Brush,
+                Width = 1,
+                HorizontalAlignment = HorizontalAlignment.Center,
+            },
+        };
+        var dragging = false;
+        var startX = 0d;
+        var left = node.Columns[index].Width;
+        var right = node.Columns[index + 1].Width;
+        divider.PointerPressed += (_, args) =>
+        {
+            startX = args.GetCurrentPoint(grid).Position.X;
+            dragging = divider.CapturePointer(args.Pointer);
+            args.Handled = dragging;
+        };
+        divider.PointerMoved += (_, args) =>
+        {
+            if (!dragging)
+            {
+                return;
+            }
+            var current = args.GetCurrentPoint(grid).Position.X;
+            var totalUnits = node.Columns.Sum(column => Math.Max(1, column.Width));
+            var delta = (current - startX) / Math.Max(1, grid.ActualWidth) * totalUnits;
+            var adjustedLeft = Math.Max(1, left + delta);
+            var adjustedRight = Math.Max(1, right - delta);
+            grid.ColumnDefinitions[index * 2].Width =
+                new GridLength(adjustedLeft, GridUnitType.Star);
+            grid.ColumnDefinitions[(index + 1) * 2].Width =
+                new GridLength(adjustedRight, GridUnitType.Star);
+            args.Handled = true;
+        };
+        divider.PointerReleased += (_, args) =>
+        {
+            if (!dragging)
+            {
+                return;
+            }
+            dragging = false;
+            divider.ReleasePointerCapture(args.Pointer);
+            var width = grid.ColumnDefinitions[index * 2].ActualWidth;
+            var columns = (ushort)Math.Clamp(
+                Math.Round(width / Math.Max(1, grid.ActualWidth) * Math.Max(1, node.BaseWidth)),
+                1,
+                ushort.MaxValue);
+            if (FirstPaneId(node.Columns[index].Root) is { } paneId)
+            {
+                Mutate(
+                    () => _mux.SetViewportWidth(paneId, columns),
+                    $"resize viewport pane {paneId}");
+            }
+            args.Handled = true;
+        };
+        return divider;
     }
 
     private FrameworkElement BuildStack(
         LayoutNodeSnapshot node,
         IReadOnlyDictionary<string, TabSnapshot> tabs,
-        IReadOnlyDictionary<string, TerminalSnapshot> terminals)
+        IReadOnlyDictionary<string, TerminalSnapshot> terminals,
+        IReadOnlyDictionary<string, BrowserSnapshot> browsers)
     {
         if (node.PaneIds.Count == 0)
         {
@@ -185,7 +577,7 @@ internal sealed class WorkspaceView : UserControl, IDisposable
             selector.Children.Add(button);
         }
         grid.Children.Add(selector);
-        var content = BuildPane(expanded, tabs, terminals);
+        var content = BuildPane(expanded, tabs, terminals, browsers);
         Grid.SetRow(content, 1);
         grid.Children.Add(content);
         return grid;
@@ -194,7 +586,8 @@ internal sealed class WorkspaceView : UserControl, IDisposable
     private FrameworkElement BuildPane(
         string paneId,
         IReadOnlyDictionary<string, TabSnapshot> tabs,
-        IReadOnlyDictionary<string, TerminalSnapshot> terminals)
+        IReadOnlyDictionary<string, TerminalSnapshot> terminals,
+        IReadOnlyDictionary<string, BrowserSnapshot> browsers)
     {
         var paneTabs = tabs.Values
             .Where(tab => tab.PaneId == paneId)
@@ -219,7 +612,7 @@ internal sealed class WorkspaceView : UserControl, IDisposable
         {
             var item = new TabViewItem
             {
-                Header = TabTitle(tab, terminals),
+                Header = TabTitle(tab, terminals, browsers),
                 Tag = tab.Id,
                 IconSource = new SymbolIconSource { Symbol = Symbol.Document },
                 HorizontalContentAlignment = HorizontalAlignment.Stretch,
@@ -227,14 +620,38 @@ internal sealed class WorkspaceView : UserControl, IDisposable
             };
             if (tab.ContentKind == "terminal")
             {
-                var terminal = new TerminalView(_mux, tab.Id);
-                _terminals[tab.Id] = terminal;
+                _renderedTerminals.Add(tab.Id);
+                if (!_terminals.TryGetValue(tab.Id, out var terminal))
+                {
+                    terminal = new TerminalView(_mux, tab.Id);
+                    _terminals[tab.Id] = terminal;
+                }
                 item.Content = terminal;
+            }
+            else if (browsers.TryGetValue(tab.ContentId, out var browserSnapshot))
+            {
+                item.IconSource = new SymbolIconSource { Symbol = Symbol.World };
+                _renderedBrowsers.Add(tab.Id);
+                if (!_browsers.TryGetValue(tab.Id, out var browser))
+                {
+                    browser = new BrowserView(_mux, browserSnapshot);
+                    var tabId = tab.Id;
+                    browser.DocumentTitleChanged += () => UpdateBrowserTitle(tabId, browser);
+                    _browsers[tab.Id] = browser;
+                }
+                else
+                {
+                    browser.Update(browserSnapshot);
+                }
+                item.Header = TabTitle(tab, terminals, browsers, browser.DocumentTitle);
+                item.Content = browser;
             }
             else
             {
-                item.Content = BuildUnavailable(Loc.S("Pane_BrowserUnavailable"));
+                item.Content = BuildUnavailable(Loc.S("Pane_BrowserStarting"));
             }
+            item.ContextFlyout = BuildTabMenu(tab, paneTabs, paneId);
+            _tabItems[tab.Id] = item;
             tabView.TabItems.Add(item);
             if (tab.Focused)
             {
@@ -248,9 +665,7 @@ internal sealed class WorkspaceView : UserControl, IDisposable
             _selectedTerminal = selectedTerminal;
         }
 
-        tabView.AddTabButtonClick += (_, _) => Mutate(
-            () => _mux.CreateTab(paneId),
-            $"create tab in {paneId}");
+        tabView.AddTabButtonClick += (_, _) => BuildNewTabMenu(paneId).ShowAt(tabView);
         tabView.TabCloseRequested += (_, args) =>
         {
             if (args.Tab.Tag is string tabId)
@@ -297,24 +712,192 @@ internal sealed class WorkspaceView : UserControl, IDisposable
         return border;
     }
 
+    private MenuFlyout BuildNewTabMenu(string paneId)
+    {
+        var menu = new MenuFlyout();
+        var terminal = new MenuFlyoutItem
+        {
+            Text = Loc.S("Pane_NewTerminal"),
+            Icon = new SymbolIcon(Symbol.Document),
+        };
+        terminal.Click += (_, _) => Mutate(
+            () => _mux.CreateTab(paneId),
+            $"create tab in {paneId}");
+        var browser = new MenuFlyoutItem
+        {
+            Text = Loc.S("Pane_NewBrowser"),
+            Icon = new SymbolIcon(Symbol.World),
+        };
+        browser.Click += async (_, _) => await CreateBrowserAsync(paneId);
+        menu.Items.Add(terminal);
+        menu.Items.Add(browser);
+        return menu;
+    }
+
+    private async System.Threading.Tasks.Task CreateBrowserAsync(string paneId)
+    {
+        var address = new TextBox { Text = "https://" };
+        var dialog = new ContentDialog
+        {
+            XamlRoot = XamlRoot,
+            Title = Loc.S("Pane_NewBrowser"),
+            Content = address,
+            PrimaryButtonText = Loc.S("Browser_Open"),
+            CloseButtonText = Loc.S("Action_Cancel"),
+            DefaultButton = ContentDialogButton.Primary,
+        };
+        if (await dialog.ShowAsync() == ContentDialogResult.Primary)
+        {
+            Mutate(
+                () => _mux.CreateBrowser(paneId, address.Text.Trim()),
+                $"create browser in {paneId}");
+        }
+    }
+
+    private MenuFlyout BuildTabMenu(TabSnapshot tab, IReadOnlyList<TabSnapshot> paneTabs, string paneId)
+    {
+        var menu = new MenuFlyout();
+        var rename = new MenuFlyoutItem { Text = Loc.S("Tab_Rename") };
+        rename.Click += async (_, _) => await RenameTabAsync(tab);
+        var moveLeft = new MenuFlyoutItem
+        {
+            Text = Loc.S("Tab_MoveLeft"),
+            IsEnabled = tab.Index > 0,
+        };
+        moveLeft.Click += (_, _) => MoveTab(tab, paneId, tab.Index - 1);
+        var moveRight = new MenuFlyoutItem
+        {
+            Text = Loc.S("Tab_MoveRight"),
+            IsEnabled = tab.Index < paneTabs.Count - 1,
+        };
+        moveRight.Click += (_, _) => MoveTab(tab, paneId, tab.Index + 1);
+        var moveTo = new MenuFlyoutSubItem { Text = Loc.S("Tab_MoveToPane") };
+        if (_snapshot is not null)
+        {
+            foreach (var pane in _snapshot.Panes.Where(candidate => candidate.Id != paneId))
+            {
+                var destination = new MenuFlyoutItem
+                {
+                    Text = string.IsNullOrWhiteSpace(pane.Name)
+                        ? Loc.S("Pane_Pane")
+                        : pane.Name,
+                };
+                destination.Click += (_, _) => MoveTab(tab, pane.Id, int.MaxValue);
+                moveTo.Items.Add(destination);
+            }
+        }
+        moveTo.IsEnabled = moveTo.Items.Count > 0;
+        var close = new MenuFlyoutItem { Text = Loc.S("Tab_Close") };
+        close.Click += (_, _) => Mutate(() => _mux.CloseTab(tab.Id), $"close tab {tab.Id}");
+        menu.Items.Add(rename);
+        menu.Items.Add(moveLeft);
+        menu.Items.Add(moveRight);
+        menu.Items.Add(moveTo);
+        menu.Items.Add(new MenuFlyoutSeparator());
+        menu.Items.Add(close);
+        return menu;
+    }
+
+    private async System.Threading.Tasks.Task RenameTabAsync(TabSnapshot tab)
+    {
+        var name = new TextBox { Text = tab.Name ?? string.Empty };
+        name.SelectAll();
+        var dialog = new ContentDialog
+        {
+            XamlRoot = XamlRoot,
+            Title = Loc.S("Tab_Rename"),
+            Content = name,
+            PrimaryButtonText = Loc.S("Action_Save"),
+            CloseButtonText = Loc.S("Action_Cancel"),
+            DefaultButton = ContentDialogButton.Primary,
+        };
+        if (await dialog.ShowAsync() == ContentDialogResult.Primary)
+        {
+            var value = string.IsNullOrEmpty(name.Text) ? null : name.Text;
+            Mutate(() => _mux.RenameTab(tab.Id, value), $"rename tab {tab.Id}");
+        }
+    }
+
+    private void MoveTab(TabSnapshot tab, string destinationPane, int index)
+    {
+        if (_snapshot is null)
+        {
+            return;
+        }
+        var pane = _snapshot.Panes.FirstOrDefault(candidate => candidate.Id == destinationPane);
+        var screen = pane is null
+            ? null
+            : _snapshot.Screens.FirstOrDefault(candidate => candidate.Id == pane.ScreenId);
+        if (screen is null)
+        {
+            return;
+        }
+        var count = _snapshot.Tabs.Count(candidate => candidate.PaneId == destinationPane);
+        var destinationIndex = index == int.MaxValue ? count : Math.Clamp(index, 0, count);
+        Mutate(
+            () => _mux.MoveTab(
+                tab.Id,
+                screen.WorkspaceId,
+                screen.Id,
+                destinationPane,
+                destinationIndex),
+            $"move tab {tab.Id}");
+    }
+
     private FrameworkElement BuildPaneActions(string paneId)
     {
         var actions = new StackPanel
         {
-            Width = 94,
+            Width = 158,
             Orientation = Orientation.Horizontal,
             Spacing = 2,
         };
         actions.Children.Add(ActionButton(SplitIcon(false), "Pane_SplitRight", () =>
-            Mutate(() => _mux.SplitPane(paneId, false), $"split right {paneId}")));
+            Mutate(() => _mux.SplitPane(paneId, "right"), $"split right {paneId}")));
         actions.Children.Add(ActionButton(SplitIcon(true), "Pane_SplitDown", () =>
-            Mutate(() => _mux.SplitPane(paneId, true), $"split down {paneId}")));
+            Mutate(() => _mux.SplitPane(paneId, "down"), $"split down {paneId}")));
         actions.Children.Add(ActionButton(
-            new FontIcon { Glyph = "\uE711", FontSize = 12 },
+            ActionGlyph("\uE740"),
+            "Pane_Zoom",
+            () => Mutate(() => _mux.ZoomPane(paneId), $"zoom pane {paneId}")));
+        actions.Children.Add(ActionButton(
+            ActionGlyph("\uE8AC"),
+            "Pane_Rename",
+            () => _ = RenamePaneAsync(paneId)));
+        actions.Children.Add(ActionButton(
+            ActionGlyph("\uE711"),
             "Pane_Close",
             () => Mutate(() => _mux.ClosePane(paneId), $"close pane {paneId}")));
         return actions;
     }
+
+    private async System.Threading.Tasks.Task RenamePaneAsync(string paneId)
+    {
+        var current = _snapshot?.Panes.FirstOrDefault(pane => pane.Id == paneId)?.Name;
+        var name = new TextBox { Text = current ?? string.Empty };
+        name.SelectAll();
+        var dialog = new ContentDialog
+        {
+            XamlRoot = XamlRoot,
+            Title = Loc.S("Pane_Rename"),
+            Content = name,
+            PrimaryButtonText = Loc.S("Action_Save"),
+            CloseButtonText = Loc.S("Action_Cancel"),
+            DefaultButton = ContentDialogButton.Primary,
+        };
+        if (await dialog.ShowAsync() == ContentDialogResult.Primary)
+        {
+            var value = string.IsNullOrWhiteSpace(name.Text) ? null : name.Text.Trim();
+            Mutate(() => _mux.RenamePane(paneId, value), $"rename pane {paneId}");
+        }
+    }
+
+    private static FontIcon ActionGlyph(string glyph) => new()
+    {
+        Glyph = glyph,
+        FontFamily = new FontFamily("Segoe Fluent Icons"),
+        FontSize = 14,
+    };
 
     private static FrameworkElement SplitIcon(bool down)
     {
@@ -344,8 +927,12 @@ internal sealed class WorkspaceView : UserControl, IDisposable
         {
             Content = icon,
             Width = 30,
-            Padding = new Thickness(8, 4, 8, 4),
+            Height = 30,
             MinWidth = 0,
+            MinHeight = 0,
+            Padding = new Thickness(4),
+            HorizontalContentAlignment = HorizontalAlignment.Center,
+            VerticalContentAlignment = VerticalAlignment.Center,
         };
         var name = Loc.S(tooltipKey);
         ToolTipService.SetToolTip(button, name);
@@ -405,20 +992,26 @@ internal sealed class WorkspaceView : UserControl, IDisposable
 
     private static string TabTitle(
         TabSnapshot tab,
-        IReadOnlyDictionary<string, TerminalSnapshot> terminals)
+        IReadOnlyDictionary<string, TerminalSnapshot> terminals,
+        IReadOnlyDictionary<string, BrowserSnapshot> browsers,
+        string? documentTitle = null)
     {
-        if (!string.IsNullOrWhiteSpace(tab.Name))
-        {
-            return tab.Name;
-        }
-        if (terminals.TryGetValue(tab.ContentId, out var terminal)
-            && !string.IsNullOrWhiteSpace(terminal.Title))
-        {
-            return terminal.Title;
-        }
-        return tab.ContentKind == "terminal"
-            ? Loc.S("Pane_Terminal")
-            : Loc.S("Pane_Browser");
+        terminals.TryGetValue(tab.ContentId, out var terminal);
+        browsers.TryGetValue(tab.ContentId, out var browser);
+        var title = !string.IsNullOrWhiteSpace(tab.Name)
+            ? tab.Name
+            : !string.IsNullOrWhiteSpace(terminal?.Title)
+                ? terminal.Title
+                : !string.IsNullOrWhiteSpace(documentTitle)
+                    ? documentTitle
+                    : !string.IsNullOrWhiteSpace(browser?.Title)
+                        ? browser.Title
+                        : tab.ContentKind == "terminal"
+                            ? Loc.S("Pane_Terminal")
+                            : Loc.S("Pane_Browser");
+        return terminal is { Running: false }
+            ? $"{title} · {Loc.S("Terminal_Exited")}"
+            : title;
     }
 
     private void Mutate(Func<bool> operation, string description)
@@ -453,13 +1046,31 @@ internal sealed class WorkspaceView : UserControl, IDisposable
         }
     }
 
-    private void DisposeTerminals()
+    private void DisposeUnrenderedViews()
     {
-        foreach (var terminal in _terminals.Values)
+        foreach (var tabId in _terminals.Keys.Where(id => !_renderedTerminals.Contains(id)).ToList())
         {
-            terminal.Dispose();
+            _terminals.Remove(tabId, out var terminal);
+            terminal?.Dispose();
         }
-        _terminals.Clear();
+        foreach (var tabId in _browsers.Keys.Where(id => !_renderedBrowsers.Contains(id)).ToList())
+        {
+            _browsers.Remove(tabId, out var browser);
+            browser?.Dispose();
+        }
+    }
+
+    public void Relocalize()
+    {
+        foreach (var browser in _browsers.Values)
+        {
+            browser.Relocalize();
+        }
+        if (_snapshot is not null)
+        {
+            _renderKey = string.Empty;
+            Render(_snapshot);
+        }
     }
 
     public void Dispose()
@@ -469,7 +1080,16 @@ internal sealed class WorkspaceView : UserControl, IDisposable
             return;
         }
         _disposed = true;
-        DisposeTerminals();
+        foreach (var terminal in _terminals.Values)
+        {
+            terminal.Dispose();
+        }
+        _terminals.Clear();
+        foreach (var browser in _browsers.Values)
+        {
+            browser.Dispose();
+        }
+        _browsers.Clear();
         Content = null;
     }
 }

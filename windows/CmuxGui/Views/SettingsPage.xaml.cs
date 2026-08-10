@@ -33,6 +33,18 @@ public sealed partial class SettingsPage : Page
     public SettingsPage()
     {
         InitializeComponent();
+        foreach (var slider in new[]
+        {
+            OpacitySlider,
+            ImageOpacitySlider,
+            TermMaskOpacitySlider,
+            AppImageOpacitySlider,
+            AppMaskOpacitySlider,
+        })
+        {
+            slider.Foreground = App.AccentBrush;
+        }
+        ProjectLinkButton.Foreground = App.AccentBrush;
         Localize();
         Populate();
         _loading = false;
@@ -63,12 +75,13 @@ public sealed partial class SettingsPage : Page
         LegalNoticeText.Text = S("Settings_LegalNotice");
 
         OpacitySlider.Header = S("Settings_Opacity");
-        BlurSlider.Header = S("Settings_Blur");
         ImageOpacitySlider.Header = S("Settings_ImageOpacity");
         AppThemeCombo.Header = S("Settings_AppTheme");
         BackdropCombo.Header = S("Settings_Backdrop");
         TermBgLabel.Text = S("Settings_TermBg");
         TermFgLabel.Text = S("Settings_TermFg");
+        AccentLabel.Text = S("Settings_Accent");
+        ResetAppearanceButton.Content = S("Settings_ResetAppearance");
         TermMaskLabel.Text = S("Settings_TermMask");
         TermMaskOpacitySlider.Header = S("Settings_MaskOpacity");
         AppBgLabel.Text = S("Settings_AppBg");
@@ -116,7 +129,6 @@ public sealed partial class SettingsPage : Page
         BackdropCombo.SelectedIndex = (int)_settings.Backdrop;
 
         OpacitySlider.Value = _settings.TerminalOpacity * 100.0;
-        BlurSlider.Value = _settings.BlurAmount * 100.0;
         ImageOpacitySlider.Value = _settings.BackgroundImageOpacity * 100.0;
         UpdateBackgroundPathText();
         UpdateAppBackgroundPathText();
@@ -126,6 +138,7 @@ public sealed partial class SettingsPage : Page
         CmuxNative.ThemeLoad(out var live);
         BindColor(TermBgPicker, TermBgButton, _settings.TerminalBackground, Packed(live.Background));
         BindColor(TermFgPicker, TermFgButton, _settings.TerminalForeground, Packed(live.Foreground));
+        BindColor(AccentPicker, AccentButton, _settings.AccentColor, Colors.DodgerBlue);
         BindColor(TermMaskPicker, TermMaskButton, _settings.TerminalMaskColor, Colors.Black);
         BindColor(AppBgPicker, AppBgButton, _settings.AppBackgroundColor, Colors.Black);
         BindColor(AppMaskPicker, AppMaskButton, _settings.AppMaskColor, Colors.Black);
@@ -213,16 +226,6 @@ public sealed partial class SettingsPage : Page
             return;
         }
         _settings.TerminalOpacity = e.NewValue / 100.0;
-        Commit();
-    }
-
-    private void OnBlurChanged(object sender, RangeBaseValueChangedEventArgs e)
-    {
-        if (_loading)
-        {
-            return;
-        }
-        _settings.BlurAmount = e.NewValue / 100.0;
         Commit();
     }
 
@@ -372,6 +375,16 @@ public sealed partial class SettingsPage : Page
 
     private void OnTermFgChanged(ColorPicker sender, ColorChangedEventArgs e) =>
         ApplyColor(TermFgButton, e, v => _settings.TerminalForeground = v);
+
+    private void OnAccentChanged(ColorPicker sender, ColorChangedEventArgs e) =>
+        ApplyColor(AccentButton, e, v => _settings.AccentColor = v);
+
+    private void OnResetAppearance(object sender, RoutedEventArgs e)
+    {
+        _settings.ResetAppearance();
+        _settings.Save();
+        Frame.Navigate(typeof(SettingsPage));
+    }
 
     private void OnTermMaskChanged(ColorPicker sender, ColorChangedEventArgs e) =>
         ApplyColor(TermMaskButton, e, v => _settings.TerminalMaskColor = v);

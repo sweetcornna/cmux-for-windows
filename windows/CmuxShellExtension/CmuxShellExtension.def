@@ -1,0 +1,4 @@
+LIBRARY "CmuxShellExtension"
+EXPORTS
+    DllCanUnloadNow PRIVATE
+    DllGetClassObject PRIVATE

@@ -3,8 +3,9 @@
     Build and sign CmuxGui as an MSIX.
 
 .DESCRIPTION
-    Produces a signed package under windows\dist, using the single-project MSIX
-    tooling built into the WinUI SDK. MSBuild owns the package layout on purpose:
+    Builds the native Explorer command and produces a signed package under
+    windows\dist using the single-project MSIX tooling built into the WinUI SDK.
+    MSBuild owns the package layout on purpose:
     packing a publish drop by hand omits the compiled XAML (*.xbf) and the app's
     resource index, and the resulting app dies inside Microsoft.UI.Xaml.dll
     before Main runs.
@@ -30,6 +31,7 @@ $ErrorActionPreference = 'Stop'
 
 $repo = Split-Path -Parent (Split-Path -Parent $PSScriptRoot)
 $proj = Join-Path $repo 'windows\CmuxGui\CmuxGui.csproj'
+$shellProj = Join-Path $repo 'windows\CmuxShellExtension\CmuxShellExtension.vcxproj'
 $manifest = Join-Path $repo 'windows\CmuxGui\Package.appxmanifest'
 $dist = Join-Path $repo 'windows\dist'
 
@@ -63,6 +65,17 @@ if ($publisher -ne $cert.Subject) {
 Write-Host "packaging $name $version ($Configuration), signing with $($cert.Thumbprint)" -ForegroundColor Cyan
 
 # --- build ------------------------------------------------------------------
+
+& $msbuild $shellProj `
+    -p:Configuration=$Configuration `
+    -p:Platform=x64 `
+    -v:minimal -nologo
+if ($LASTEXITCODE -ne 0) { throw "shell extension build failed ($LASTEXITCODE)" }
+
+$shellDll = Join-Path $repo "windows\CmuxShellExtension\bin\x64\$Configuration\CmuxShellExtension.dll"
+if (-not (Test-Path $shellDll -PathType Leaf)) {
+    throw "shell extension build reported success but did not produce '$shellDll'."
+}
 
 Remove-Item $dist -Recurse -Force -EA SilentlyContinue
 New-Item -ItemType Directory -Force -Path $dist | Out-Null

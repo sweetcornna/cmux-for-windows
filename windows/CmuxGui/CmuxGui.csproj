@@ -41,6 +41,7 @@
     <PackageReference Include="Microsoft.WindowsAppSDK" Version="1.6.250228001" />
     <PackageReference Include="Microsoft.Windows.SDK.BuildTools" Version="10.0.26100.1742" />
     <PackageReference Include="Microsoft.Graphics.Win2D" Version="1.3.2" />
+    <PackageReference Include="Microsoft.Web.WebView2" Version="1.0.2651.64" />
   </ItemGroup>
 
   <!-- Localized strings live in Strings\<lang>\Resources.resw. They need no
@@ -54,6 +55,14 @@
        validation if the payload does not actually contain them. -->
   <ItemGroup>
     <Content Include="Assets\*.png">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </Content>
+    <Content Include="Assets\AppIcon.ico">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </Content>
+    <Content Include="..\CmuxShellExtension\bin\x64\$(Configuration)\CmuxShellExtension.dll"
+             Condition="Exists('..\CmuxShellExtension\bin\x64\$(Configuration)\CmuxShellExtension.dll')">
+      <Link>CmuxShellExtension.dll</Link>
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </Content>
   </ItemGroup>

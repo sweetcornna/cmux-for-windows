@@ -436,6 +436,7 @@ fn parse_pane(value: &Value) -> Option<PaneView> {
                             {
                                 Some("external") => Some(BrowserSource::External),
                                 Some("launched") => Some(BrowserSource::Launched),
+                                Some("native") => Some(BrowserSource::Native),
                                 _ => None,
                             },
                             browser_frames_stalled: tab

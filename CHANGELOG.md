@@ -6,12 +6,24 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-08-09
+
+### Added
+
+- Added optional first-level Windows 11 Explorer commands for opening a folder in a new cmux window or new cmux workspace, backed by a native `IExplorerCommand` server and signed sparse identity package, while retaining classic folder verbs for Windows 10.
+
 ### Changed
 
 - Reduced the repository to the native Windows GUI, Windows-compatible Rust engine and TUI, required Ghostty source, Windows CI, and supporting documentation.
 - Rewrote project documentation to identify `sweetcornna` as the independent maintainer and to make the fork's unsupported relationship to Manaflow explicit.
 - Added the same independent-fork disclosure, project link, and installed-notice guidance to the localized GUI About section.
 - Included direct Ghostty and vendored Rust license texts in the Windows installer payload.
+- Replaced the placeholder Windows icons and title-bar glyph with authoritative upstream cmux artwork across every Win32 ICO frame, executable, installer shortcut, package, taskbar, and Explorer command; Setup now removes the obsolete full development MSIX that could leave a duplicate stale Windows Search entry.
+- Reconciled volatile snapshot updates without rebuilding unchanged pane controls, corrected action-button icon clipping, and moved split dragging to an accessible native WinUI thumb.
+- Standardized screen and pane action buttons at 30 DIP and replaced the active pane's blue outline with the neutral pane border while retaining logical focus behavior.
+- Applied Ghostty themes and custom terminal foreground/background colors through mux-wide defaults so visible, hidden, restored, and newly created terminals update consistently, including immediate restoration of the Ghostty baseline when following the config again; custom shell accents now update bound actions and settings controls through one shared live brush.
+- Resynchronized and repainted terminal canvases after split, zoom, unzoom, close, and other host reparenting operations to prevent stale backing surfaces from stretching terminal output.
+- Deferred Win2D canvas attachment until a terminal host finishes loading, preventing newly created terminal tabs from remaining blank when WinUI delivers an early unmatched unload event.
 
 ## [0.2.1] - 2026-08-08
 

@@ -1242,7 +1242,8 @@
       "kind": "enum",
       "values": [
         "external",
-        "launched"
+        "launched",
+        "native"
       ]
     },
     "BrowserStatus": {
@@ -8770,6 +8771,17 @@
               "name": "string"
             },
             "description": "When present, exact name bytes are preserved, including empty, whitespace, and Unicode."
+          },
+          "backend": {
+            "required": false,
+            "type": {
+              "kind": "enum",
+              "values": [
+                "cdp",
+                "native"
+              ]
+            },
+            "description": "Live browser owner. Defaults to cdp; native delegates rendering and history to a local frontend while keeping durable topology and URL metadata in the core."
           },
           "width_px": {
             "required": false,

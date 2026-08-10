@@ -14,21 +14,30 @@ public sealed partial class MainWindow : Window
 {
     private sealed class WorkspaceEntry
     {
-        public required MuxRuntime.WorkspaceInfo Workspace { get; init; }
+        public required MuxRuntime.WorkspaceInfo Workspace { get; set; }
         public required WorkspaceView View { get; init; }
         public required NavigationViewItem Item { get; init; }
     }
 
     private readonly MuxRuntime _mux;
-    private readonly Dictionary<ulong, WorkspaceEntry> _workspaces = [];
+    private readonly Dictionary<string, WorkspaceEntry> _workspaces = [];
+    private readonly string? _launchFolder;
+    private readonly DispatcherTimer _topologyTimer = new();
+    private string _snapshotGeneration = string.Empty;
+    private string _snapshotRevision = string.Empty;
+    private bool _topologyPolling;
+    private bool _topologyFailureLogged;
     private int _tabCounter;
     private bool _windowActivated;
     private bool _closed;
 
-    public MainWindow()
+    public MainWindow(string sessionName, string? launchFolder, bool persistentSession = true)
     {
         InitializeComponent();
-        _mux = MuxRuntime.Open();
+        App.InitializeAccentBrush();
+        NewWorkspaceButton.Foreground = App.AccentBrush;
+        _launchFolder = launchFolder;
+        _mux = MuxRuntime.Open(sessionName, persistentSession);
 
         ExtendsContentIntoTitleBar = true;
         SetTitleBar(AppTitleBar);
@@ -40,8 +49,12 @@ public sealed partial class MainWindow : Window
 
         Activated += OnWindowActivated;
         Closed += OnWindowClosed;
+        NavSearch.TextChanged += OnNavSearchChanged;
+        _topologyTimer.Interval = TimeSpan.FromMilliseconds(750);
+        _topologyTimer.Tick += OnTopologyTick;
 
         RestoreWorkspaces();
+        _topologyTimer.Start();
     }
 
     private void OnWindowActivated(object sender, WindowActivatedEventArgs e)
@@ -62,6 +75,30 @@ public sealed partial class MainWindow : Window
         }
     }
 
+    private void OnNavSearchChanged(
+        AutoSuggestBox sender,
+        AutoSuggestBoxTextChangedEventArgs args)
+    {
+        var query = sender.Text.Trim();
+        foreach (var entry in _workspaces.Values)
+        {
+            var subtitle = entry.Item.Content is StackPanel panel
+                && panel.Children.Count > 1
+                && panel.Children[1] is TextBlock text
+                    ? text.Text
+                    : string.Empty;
+            var visibility = query.Length == 0
+                || entry.Workspace.Name.Contains(query, StringComparison.CurrentCultureIgnoreCase)
+                || subtitle.Contains(query, StringComparison.CurrentCultureIgnoreCase)
+                    ? Visibility.Visible
+                    : Visibility.Collapsed;
+            if (entry.Item.Visibility != visibility)
+            {
+                entry.Item.Visibility = visibility;
+            }
+        }
+    }
+
     private void Relocalize()
     {
         NavSearch.PlaceholderText = Loc.S("Nav_Search");
@@ -72,11 +109,23 @@ public sealed partial class MainWindow : Window
         ToolTipService.SetToolTip(CloseWorkspaceButton, closeWorkspace);
         AutomationProperties.SetName(NewWorkspaceButton, newWorkspace);
         AutomationProperties.SetName(CloseWorkspaceButton, closeWorkspace);
+        foreach (var entry in _workspaces.Values)
+        {
+            entry.View.Relocalize();
+            if (entry.Item.ContextFlyout is MenuFlyout { Items.Count: >= 5 } menu)
+            {
+                ((MenuFlyoutItem)menu.Items[0]).Text = Loc.S("Workspace_Rename");
+                ((MenuFlyoutItem)menu.Items[1]).Text = Loc.S("Workspace_MoveUp");
+                ((MenuFlyoutItem)menu.Items[2]).Text = Loc.S("Workspace_MoveDown");
+                ((MenuFlyoutItem)menu.Items[4]).Text = closeWorkspace;
+            }
+        }
     }
 
     private void ApplyAppearance()
     {
         var settings = AppSettings.Current;
+        _mux.ApplyTerminalAppearance();
 
         var hasCustomBackground = !string.IsNullOrWhiteSpace(settings.AppBackgroundColor)
             || (!string.IsNullOrWhiteSpace(settings.AppImagePath)
@@ -127,6 +176,8 @@ public sealed partial class MainWindow : Window
                 _ => ElementTheme.Default,
             };
         }
+
+        App.ApplyAccentColor(ColorUtil.Parse(settings.AccentColor));
     }
 
     private void RestoreWorkspaces()
@@ -137,10 +188,10 @@ public sealed partial class MainWindow : Window
             .DefaultIfEmpty()
             .Max();
 
-        if (!string.IsNullOrWhiteSpace(App.LaunchFolder))
+        if (!string.IsNullOrWhiteSpace(_launchFolder))
         {
             var workspace = _mux.CreateWorkspace(NextWorkspaceTitle());
-            if (!_mux.CreateTerminal(workspace.PublicId, App.LaunchFolder))
+            if (!_mux.CreateTerminal(workspace.PublicId, _launchFolder))
             {
                 throw new InvalidOperationException("The Explorer workspace terminal could not be created.");
             }
@@ -157,6 +208,7 @@ public sealed partial class MainWindow : Window
         }
 
         var snapshot = _mux.Snapshot();
+        RememberSnapshotCursor(snapshot);
         WorkspaceEntry? selected = null;
         foreach (var workspace in workspaces)
         {
@@ -172,6 +224,23 @@ public sealed partial class MainWindow : Window
             Nav.SelectedItem = selected.Item;
             ShowWorkspace(selected);
         }
+    }
+
+    public void HandleActivation(string? folder)
+    {
+        if (!string.IsNullOrWhiteSpace(folder))
+        {
+            var workspace = _mux.CreateWorkspace(NextWorkspaceTitle());
+            if (_mux.CreateTerminal(workspace.PublicId, folder))
+            {
+                workspace = _mux.Workspaces()
+                    .Single(candidate => candidate.PublicId == workspace.PublicId);
+                var entry = AddWorkspace(workspace, _mux.Snapshot());
+                Nav.SelectedItem = entry.Item;
+                ShowWorkspace(entry);
+            }
+        }
+        Activate();
     }
 
     private WorkspaceEntry AddWorkspace(
@@ -192,12 +261,22 @@ public sealed partial class MainWindow : Window
         item.Tag = entry;
 
         var menu = new MenuFlyout();
+        var rename = new MenuFlyoutItem { Text = Loc.S("Workspace_Rename") };
+        rename.Click += async (_, _) => await RenameWorkspaceAsync(entry);
+        var moveUp = new MenuFlyoutItem { Text = Loc.S("Workspace_MoveUp") };
+        moveUp.Click += (_, _) => MoveWorkspace(entry, -1);
+        var moveDown = new MenuFlyoutItem { Text = Loc.S("Workspace_MoveDown") };
+        moveDown.Click += (_, _) => MoveWorkspace(entry, 1);
         var close = new MenuFlyoutItem { Text = Loc.S("Workspace_Close") };
         close.Click += (_, _) => CloseWorkspace(entry);
+        menu.Items.Add(rename);
+        menu.Items.Add(moveUp);
+        menu.Items.Add(moveDown);
+        menu.Items.Add(new MenuFlyoutSeparator());
         menu.Items.Add(close);
         item.ContextFlyout = menu;
 
-        _workspaces.Add(workspace.Id, entry);
+        _workspaces.Add(workspace.PublicId, entry);
         Nav.MenuItems.Add(item);
         return entry;
     }
@@ -206,21 +285,45 @@ public sealed partial class MainWindow : Window
         MuxRuntime.WorkspaceInfo workspace,
         MuxSnapshot snapshot)
     {
+        var item = new NavigationViewItem
+        {
+            Icon = new SymbolIcon(Symbol.Document),
+        };
+        UpdateSessionItem(item, workspace, snapshot);
+        return item;
+    }
+
+    private static void UpdateSessionItem(
+        NavigationViewItem item,
+        MuxRuntime.WorkspaceInfo workspace,
+        MuxSnapshot snapshot)
+    {
+        var subtitle = WorkspaceSubtitle(workspace, snapshot);
+        if (item.Content is StackPanel { Children.Count: >= 2 } current
+            && current.Children[0] is TextBlock name
+            && current.Children[1] is TextBlock detail)
+        {
+            if (name.Text != workspace.Name)
+            {
+                name.Text = workspace.Name;
+            }
+            if (detail.Text != subtitle)
+            {
+                detail.Text = subtitle;
+            }
+            return;
+        }
+
         var text = new StackPanel();
         text.Children.Add(new TextBlock { Text = workspace.Name });
         text.Children.Add(new TextBlock
         {
-            Text = WorkspaceSubtitle(workspace, snapshot),
+            Text = subtitle,
             Style = Application.Current.Resources["CaptionTextBlockStyle"] as Style,
             Foreground = Application.Current.Resources["TextFillColorSecondaryBrush"] as Brush,
             TextTrimming = TextTrimming.CharacterEllipsis,
         });
-
-        return new NavigationViewItem
-        {
-            Content = text,
-            Icon = new SymbolIcon(Symbol.Document),
-        };
+        item.Content = text;
     }
 
     private static string WorkspaceSubtitle(
@@ -229,7 +332,8 @@ public sealed partial class MainWindow : Window
     {
         var screen = snapshot.Screens
             .Where(candidate => candidate.WorkspaceId == workspace.PublicId)
-            .OrderBy(candidate => candidate.Index)
+            .OrderByDescending(candidate => candidate.Focused)
+            .ThenBy(candidate => candidate.Index)
             .FirstOrDefault();
         var activePane = screen?.Layout.ActivePaneId;
         var tab = snapshot.Tabs.FirstOrDefault(candidate =>
@@ -275,17 +379,138 @@ public sealed partial class MainWindow : Window
         }
     }
 
+    private async System.Threading.Tasks.Task RenameWorkspaceAsync(WorkspaceEntry entry)
+    {
+        var name = new TextBox
+        {
+            Text = entry.Workspace.Name,
+            SelectionStart = 0,
+            SelectionLength = entry.Workspace.Name.Length,
+        };
+        var dialog = new ContentDialog
+        {
+            XamlRoot = RootGrid.XamlRoot,
+            Title = Loc.S("Workspace_Rename"),
+            Content = name,
+            PrimaryButtonText = Loc.S("Action_Save"),
+            CloseButtonText = Loc.S("Action_Cancel"),
+            DefaultButton = ContentDialogButton.Primary,
+        };
+        if (await dialog.ShowAsync() != ContentDialogResult.Primary
+            || !_mux.RenameWorkspace(entry.Workspace.PublicId, name.Text))
+        {
+            return;
+        }
+        SyncWorkspaceNavigation();
+    }
+
+    private void MoveWorkspace(WorkspaceEntry entry, int delta)
+    {
+        var ordered = _mux.Workspaces().ToList();
+        var index = ordered.FindIndex(workspace => workspace.PublicId == entry.Workspace.PublicId);
+        if (index < 0)
+        {
+            return;
+        }
+        var destination = Math.Clamp(index + delta, 0, ordered.Count - 1);
+        if (destination == index || !_mux.MoveWorkspace(entry.Workspace.PublicId, destination))
+        {
+            return;
+        }
+        SyncWorkspaceNavigation();
+    }
+
+    private void SyncWorkspaceNavigation()
+    {
+        var latest = _mux.Workspaces();
+        var snapshot = _mux.Snapshot();
+        SyncWorkspaceNavigation(latest, snapshot, followActive: false);
+        RememberSnapshotCursor(snapshot);
+    }
+
+    private void SyncWorkspaceNavigation(
+        IReadOnlyList<MuxRuntime.WorkspaceInfo> latest,
+        MuxSnapshot snapshot,
+        bool followActive)
+    {
+        var liveIds = latest.Select(workspace => workspace.PublicId).ToHashSet(StringComparer.Ordinal);
+        foreach (var stale in _workspaces.Values
+                     .Where(entry => !liveIds.Contains(entry.Workspace.PublicId))
+                     .ToList())
+        {
+            stale.View.Dispose();
+            _workspaces.Remove(stale.Workspace.PublicId);
+            Nav.MenuItems.Remove(stale.Item);
+        }
+
+        foreach (var workspace in latest)
+        {
+            if (!_workspaces.TryGetValue(workspace.PublicId, out var entry))
+            {
+                entry = AddWorkspace(workspace, snapshot);
+            }
+            entry.Workspace = workspace;
+            UpdateSessionItem(entry.Item, workspace, snapshot);
+        }
+
+        for (var index = 0; index < latest.Count; index++)
+        {
+            var item = _workspaces[latest[index].PublicId].Item;
+            var destination = index + 1;
+            if (Nav.MenuItems.IndexOf(item) == destination)
+            {
+                continue;
+            }
+            Nav.MenuItems.Remove(item);
+            Nav.MenuItems.Insert(destination, item);
+        }
+
+        if (latest.Count == 0)
+        {
+            WorkspaceHost.Content = null;
+            Close();
+            return;
+        }
+
+        if (SettingsFrame.Visibility != Visibility.Visible)
+        {
+            var selected = Nav.SelectedItem as NavigationViewItem;
+            if (followActive)
+            {
+                var active = latest.FirstOrDefault(workspace => workspace.Active);
+                if (!string.IsNullOrEmpty(active.PublicId)
+                    && _workspaces.TryGetValue(active.PublicId, out var activeEntry))
+                {
+                    selected = activeEntry.Item;
+                }
+            }
+            if (selected?.Tag is not WorkspaceEntry selectedEntry
+                || !_workspaces.ContainsKey(selectedEntry.Workspace.PublicId))
+            {
+                selected = latest.Count > 0 ? _workspaces[latest[0].PublicId].Item : null;
+            }
+            Nav.SelectedItem = selected;
+            if (selected?.Tag is WorkspaceEntry entry
+                && !ReferenceEquals(WorkspaceHost.Content, entry.View))
+            {
+                ShowWorkspace(entry);
+            }
+        }
+        OnNavSearchChanged(NavSearch, null!);
+    }
+
     private void CloseWorkspace(WorkspaceEntry entry)
     {
-        if (!_mux.CloseWorkspace(entry.Workspace.Id))
+        var navigationIndex = Nav.MenuItems.IndexOf(entry.Item);
+        if (!_mux.CloseWorkspace(entry.Workspace.PublicId))
         {
-            Diag.Log($"workspace close failed: {entry.Workspace.Id}");
+            Diag.Log($"workspace close failed: {entry.Workspace.PublicId}");
             return;
         }
 
         var wasVisible = ReferenceEquals(WorkspaceHost.Content, entry.View);
         entry.View.Dispose();
-        _workspaces.Remove(entry.Workspace.Id);
+        _workspaces.Remove(entry.Workspace.PublicId);
         Nav.MenuItems.Remove(entry.Item);
 
         if (_workspaces.Count == 0)
@@ -295,7 +520,9 @@ public sealed partial class MainWindow : Window
         }
         if (wasVisible)
         {
-            var next = _workspaces.Values.First();
+            var nextIndex = Math.Clamp(navigationIndex, 1, Nav.MenuItems.Count - 1);
+            var next = (Nav.MenuItems[nextIndex] as NavigationViewItem)?.Tag as WorkspaceEntry
+                ?? _workspaces.Values.First();
             Nav.SelectedItem = next.Item;
             ShowWorkspace(next);
         }
@@ -325,9 +552,9 @@ public sealed partial class MainWindow : Window
 
     private void ShowWorkspace(WorkspaceEntry entry)
     {
-        if (!_mux.SelectWorkspace(entry.Workspace.Id))
+        if (!_mux.SelectWorkspace(entry.Workspace.PublicId))
         {
-            Diag.Log($"workspace selection failed: {entry.Workspace.Id}");
+            Diag.Log($"workspace selection failed: {entry.Workspace.PublicId}");
             return;
         }
         try
@@ -342,6 +569,54 @@ public sealed partial class MainWindow : Window
         FocusSelectedTerminal("workspace-selected");
     }
 
+    private void OnTopologyTick(object? sender, object args)
+    {
+        if (_closed || _topologyPolling)
+        {
+            return;
+        }
+        _topologyPolling = true;
+        try
+        {
+            var latest = _mux.Workspaces();
+            var snapshot = _mux.Snapshot();
+            var changed = snapshot.Cursor.Generation != _snapshotGeneration
+                || snapshot.Cursor.Revision != _snapshotRevision;
+            SyncWorkspaceNavigation(latest, snapshot, followActive: changed);
+            if (WorkspaceHost.Content is WorkspaceView view)
+            {
+                if (changed)
+                {
+                    view.Render(snapshot);
+                }
+                else
+                {
+                    view.UpdateStatus(snapshot);
+                }
+            }
+            RememberSnapshotCursor(snapshot);
+            _topologyFailureLogged = false;
+        }
+        catch (Exception ex)
+        {
+            if (!_topologyFailureLogged)
+            {
+                Diag.Log($"topology polling failed: {ex.Message}");
+                _topologyFailureLogged = true;
+            }
+        }
+        finally
+        {
+            _topologyPolling = false;
+        }
+    }
+
+    private void RememberSnapshotCursor(MuxSnapshot snapshot)
+    {
+        _snapshotGeneration = snapshot.Cursor.Generation;
+        _snapshotRevision = snapshot.Cursor.Revision;
+    }
+
     private void OnWindowClosed(object sender, WindowEventArgs args)
     {
         if (_closed)
@@ -354,12 +629,16 @@ public sealed partial class MainWindow : Window
         AppSettings.Changed -= Relocalize;
         Activated -= OnWindowActivated;
         Closed -= OnWindowClosed;
+        NavSearch.TextChanged -= OnNavSearchChanged;
+        _topologyTimer.Stop();
+        _topologyTimer.Tick -= OnTopologyTick;
 
         foreach (var entry in _workspaces.Values)
         {
             entry.View.Dispose();
         }
         _workspaces.Clear();
+        AppSettings.Current.Save();
         _mux.Dispose();
     }
 }

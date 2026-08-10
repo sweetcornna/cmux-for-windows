@@ -5,6 +5,7 @@ use anyhow::Context;
 use serde_json::{Map, Value, json};
 
 use super::*;
+use crate::browser::BrowserBackend;
 use crate::model::{LayoutColumn, ScreenLayoutSnapshot};
 use crate::resource::{
     BrowserPublicId, ContentPublicId, PanePublicId, ResourceError, ResourceOperation,
@@ -3488,6 +3489,7 @@ impl Mux {
             ResourceOperation::TabCreateBrowser => {
                 let slots = self.effect_slots(&path)?;
                 let size = effect_browser_cell_size(self, fields)?;
+                let backend = effect_browser_backend(fields)?;
                 let identity = self.effect_browser_reservation(intent)?;
                 let surface = match slots.pane {
                     Some(pane) => self.new_browser_tab_reserved(
@@ -3496,12 +3498,14 @@ impl Mux {
                         size,
                         identity,
                         None,
+                        backend,
                     )?,
                     None if slots.workspace.is_some() => self.create_browser_surface_in_workspace(
                         slots.workspace.expect("checked"),
                         required_str(fields, "url")?.to_string(),
                         size,
                         Some(identity),
+                        backend,
                     )?,
                     None => {
                         let (workspace_key, workspace_public_id, workspace_mutation) =
@@ -3517,6 +3521,7 @@ impl Mux {
                             required_str(fields, "url")?.to_string(),
                             size,
                             Some(identity),
+                            backend,
                         )?
                     }
                 };
@@ -4362,6 +4367,7 @@ fn validate_effect_fields(
         }
         ResourceOperation::TabCreateBrowser => {
             anyhow::ensure!(!required_str(fields, "url")?.is_empty(), "browser URL is empty");
+            let _ = effect_browser_backend(fields)?;
             let dimensions = (
                 fields.get("width_px").and_then(Value::as_u64),
                 fields.get("height_px").and_then(Value::as_u64),
@@ -4421,6 +4427,14 @@ fn effect_cell_size(fields: &Map<String, Value>) -> anyhow::Result<Option<(u16, 
             u16::try_from(rows).context("rows exceed uint16")?,
         ))),
         _ => anyhow::bail!("cols and rows must be paired"),
+    }
+}
+
+fn effect_browser_backend(fields: &Map<String, Value>) -> anyhow::Result<BrowserBackend> {
+    match fields.get("backend").and_then(Value::as_str).unwrap_or("cdp") {
+        "cdp" => Ok(BrowserBackend::Cdp),
+        "native" => Ok(BrowserBackend::Native),
+        backend => anyhow::bail!("unsupported browser backend {backend:?}"),
     }
 }
 

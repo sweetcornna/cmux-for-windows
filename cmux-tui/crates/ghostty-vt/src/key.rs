@@ -111,6 +111,34 @@ pub fn key_input_from_chord(chord: &str) -> Option<KeyInput> {
     }
     let key_name = key_name?;
     let mut input = KeyInput { mods, action: Some(KeyAction::Press), ..Default::default() };
+    if let Some((key, text)) = match key_name {
+        "numpad0" => Some((sys::GHOSTTY_KEY_NUMPAD_0, '0')),
+        "numpad1" => Some((sys::GHOSTTY_KEY_NUMPAD_1, '1')),
+        "numpad2" => Some((sys::GHOSTTY_KEY_NUMPAD_2, '2')),
+        "numpad3" => Some((sys::GHOSTTY_KEY_NUMPAD_3, '3')),
+        "numpad4" => Some((sys::GHOSTTY_KEY_NUMPAD_4, '4')),
+        "numpad5" => Some((sys::GHOSTTY_KEY_NUMPAD_5, '5')),
+        "numpad6" => Some((sys::GHOSTTY_KEY_NUMPAD_6, '6')),
+        "numpad7" => Some((sys::GHOSTTY_KEY_NUMPAD_7, '7')),
+        "numpad8" => Some((sys::GHOSTTY_KEY_NUMPAD_8, '8')),
+        "numpad9" => Some((sys::GHOSTTY_KEY_NUMPAD_9, '9')),
+        "numpadadd" => Some((sys::GHOSTTY_KEY_NUMPAD_ADD, '+')),
+        "numpadcomma" => Some((sys::GHOSTTY_KEY_NUMPAD_COMMA, ',')),
+        "numpaddecimal" => Some((sys::GHOSTTY_KEY_NUMPAD_DECIMAL, '.')),
+        "numpaddivide" => Some((sys::GHOSTTY_KEY_NUMPAD_DIVIDE, '/')),
+        "numpadequal" => Some((sys::GHOSTTY_KEY_NUMPAD_EQUAL, '=')),
+        "numpadmultiply" => Some((sys::GHOSTTY_KEY_NUMPAD_MULTIPLY, '*')),
+        "numpadseparator" => Some((sys::GHOSTTY_KEY_NUMPAD_SEPARATOR, ',')),
+        "numpadsubtract" => Some((sys::GHOSTTY_KEY_NUMPAD_SUBTRACT, '-')),
+        _ => None,
+    } {
+        input.key = key;
+        input.unshifted_codepoint = text as u32;
+        if !mods.contains(Mods::CTRL) {
+            input.utf8 = text.to_string();
+        }
+        return Some(input);
+    }
     match key_name {
         "enter" | "return" => input.key = sys::GHOSTTY_KEY_ENTER,
         "tab" => input.key = sys::GHOSTTY_KEY_TAB,
@@ -130,6 +158,19 @@ pub fn key_input_from_chord(chord: &str) -> Option<KeyInput> {
         "end" => input.key = sys::GHOSTTY_KEY_END,
         "pageup" => input.key = sys::GHOSTTY_KEY_PAGE_UP,
         "pagedown" => input.key = sys::GHOSTTY_KEY_PAGE_DOWN,
+        "numlock" => input.key = sys::GHOSTTY_KEY_NUM_LOCK,
+        "numpadenter" => input.key = sys::GHOSTTY_KEY_NUMPAD_ENTER,
+        "numpadup" => input.key = sys::GHOSTTY_KEY_NUMPAD_UP,
+        "numpaddown" => input.key = sys::GHOSTTY_KEY_NUMPAD_DOWN,
+        "numpadright" => input.key = sys::GHOSTTY_KEY_NUMPAD_RIGHT,
+        "numpadleft" => input.key = sys::GHOSTTY_KEY_NUMPAD_LEFT,
+        "numpadbegin" => input.key = sys::GHOSTTY_KEY_NUMPAD_BEGIN,
+        "numpadhome" => input.key = sys::GHOSTTY_KEY_NUMPAD_HOME,
+        "numpadend" => input.key = sys::GHOSTTY_KEY_NUMPAD_END,
+        "numpadinsert" => input.key = sys::GHOSTTY_KEY_NUMPAD_INSERT,
+        "numpaddelete" => input.key = sys::GHOSTTY_KEY_NUMPAD_DELETE,
+        "numpadpageup" => input.key = sys::GHOSTTY_KEY_NUMPAD_PAGE_UP,
+        "numpadpagedown" => input.key = sys::GHOSTTY_KEY_NUMPAD_PAGE_DOWN,
         "space" => {
             input.key = sys::GHOSTTY_KEY_SPACE;
             input.unshifted_codepoint = ' ' as u32;
@@ -404,6 +445,11 @@ mod tests {
         out.clear();
         encoder.encode(&key_input_from_chord("up").unwrap(), &mut out).unwrap();
         assert!(!out.is_empty());
+
+        let numpad = key_input_from_chord("numpad7").unwrap();
+        assert_eq!(numpad.key, sys::GHOSTTY_KEY_NUMPAD_7);
+        assert_eq!(numpad.utf8, "7");
+        assert_eq!(key_input_from_chord("numpadenter").unwrap().key, sys::GHOSTTY_KEY_NUMPAD_ENTER);
 
         assert!(key_input_from_chord("not-a-key").is_none());
     }

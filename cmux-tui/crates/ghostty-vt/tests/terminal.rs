@@ -59,6 +59,19 @@ fn resize_reflows() {
 }
 
 #[test]
+fn render_frame_preserves_soft_wrap_rows() {
+    let mut term = Terminal::new(5, 3, 1000, Callbacks::default()).unwrap();
+    term.vt_write(b"abcdef");
+
+    let mut state = RenderState::new().unwrap();
+    state.update(&mut term).unwrap();
+    let frame = state.build_frame().unwrap();
+
+    assert!(frame.row_wrapped(0));
+    assert!(!frame.row_wrapped(1));
+}
+
+#[test]
 fn title_and_pty_callbacks() {
     let title_changed = Arc::new(Mutex::new(false));
     let pty_out: Arc<Mutex<Vec<u8>>> = Arc::new(Mutex::new(Vec::new()));

@@ -22,9 +22,24 @@ internal sealed class MuxSnapshot
     [JsonPropertyName("terminals")]
     public List<TerminalSnapshot> Terminals { get; init; } = [];
 
+    [JsonPropertyName("browsers")]
+    public List<BrowserSnapshot> Browsers { get; init; } = [];
+
+    [JsonPropertyName("cursor")]
+    public SnapshotCursor Cursor { get; init; } = new();
+
     public static MuxSnapshot Parse(ReadOnlySpan<byte> json) =>
         JsonSerializer.Deserialize<MuxSnapshot>(json)
         ?? throw new InvalidOperationException("The cmux topology snapshot was empty.");
+}
+
+internal sealed class SnapshotCursor
+{
+    [JsonPropertyName("generation")]
+    public string Generation { get; init; } = string.Empty;
+
+    [JsonPropertyName("revision")]
+    public string Revision { get; init; } = "0";
 }
 
 internal sealed class WorkspaceSnapshot
@@ -49,6 +64,9 @@ internal sealed class ScreenSnapshot
 
     [JsonPropertyName("workspace_id")]
     public string WorkspaceId { get; init; } = string.Empty;
+
+    [JsonPropertyName("name")]
+    public string? Name { get; init; }
 
     [JsonPropertyName("index")]
     public int Index { get; init; }
@@ -77,6 +95,9 @@ internal sealed class LayoutNodeSnapshot
     [JsonPropertyName("kind")]
     public string Kind { get; init; } = string.Empty;
 
+    [JsonPropertyName("split_id")]
+    public string? SplitId { get; init; }
+
     [JsonPropertyName("pane_id")]
     public string? PaneId { get; init; }
 
@@ -104,12 +125,18 @@ internal sealed class LayoutNodeSnapshot
     [JsonPropertyName("expanded_pane_id")]
     public string? ExpandedPaneId { get; init; }
 
+    [JsonPropertyName("base_width")]
+    public double BaseWidth { get; init; } = 1;
+
     [JsonPropertyName("columns")]
     public List<ViewportColumnSnapshot> Columns { get; init; } = [];
 }
 
 internal sealed class ViewportColumnSnapshot
 {
+    [JsonPropertyName("column_id")]
+    public string Id { get; init; } = string.Empty;
+
     [JsonPropertyName("width")]
     public double Width { get; init; } = 1;
 
@@ -125,8 +152,14 @@ internal sealed class PaneSnapshot
     [JsonPropertyName("screen_id")]
     public string ScreenId { get; init; } = string.Empty;
 
+    [JsonPropertyName("name")]
+    public string? Name { get; init; }
+
     [JsonPropertyName("focused")]
     public bool Focused { get; init; }
+
+    [JsonPropertyName("zoomed")]
+    public bool Zoomed { get; init; }
 }
 
 internal sealed class TabSnapshot
@@ -163,4 +196,43 @@ internal sealed class TerminalSnapshot
 
     [JsonPropertyName("cwd")]
     public string? Cwd { get; init; }
+
+    [JsonPropertyName("cols")]
+    public int Columns { get; init; }
+
+    [JsonPropertyName("rows")]
+    public int Rows { get; init; }
+
+    [JsonPropertyName("running")]
+    public bool Running { get; init; }
+
+    [JsonPropertyName("lifecycle")]
+    public string Lifecycle { get; init; } = string.Empty;
+}
+
+internal sealed class BrowserSnapshot
+{
+    [JsonPropertyName("id")]
+    public string Id { get; init; } = string.Empty;
+
+    [JsonPropertyName("tab_id")]
+    public string TabId { get; init; } = string.Empty;
+
+    [JsonPropertyName("url")]
+    public string Url { get; init; } = string.Empty;
+
+    [JsonPropertyName("title")]
+    public string? Title { get; init; }
+
+    [JsonPropertyName("loading")]
+    public bool Loading { get; init; }
+
+    [JsonPropertyName("source")]
+    public string Source { get; init; } = string.Empty;
+
+    [JsonPropertyName("status")]
+    public string Status { get; init; } = string.Empty;
+
+    [JsonPropertyName("error")]
+    public string? Error { get; init; }
 }

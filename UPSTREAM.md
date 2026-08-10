@@ -12,6 +12,10 @@ cmux for Windows is a modified, Windows-focused fork maintained independently by
 
 Git history remains the authoritative record for individual files and later upstream synchronizations.
 
+## Brand assets
+
+The Windows executable, package, installer, title bar, and Explorer integration use the upstream cmux application icon exported at commit `3566b6ec2170fc57b74ca5b71f954aa631be75cb`. The authoritative source is `AppIcon.icon/`, and the Windows-ready rasters are derived from `Assets.xcassets/AppIcon.appiconset/` at that revision.
+
 ## Nature of this fork
 
 This repository keeps the native Windows GUI, Windows-compatible Rust multiplexer and TUI, Ghostty terminal-engine source, Windows packaging, CI, and project documentation. The conversion removed upstream Apple applications, Swift/Xcode sources, iOS support, web applications, cloud services, Homebrew distribution, Unix remote daemon and relay, language SDK publishing, upstream marketing assets, and internal project tooling.

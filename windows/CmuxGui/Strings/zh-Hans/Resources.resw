@@ -116,10 +116,10 @@
     <value>无</value>
   </data>
   <data name="ContextMenu_OpenWindow" xml:space="preserve">
-    <value>用 cmux 打开</value>
+    <value>在 cmux 新窗口中打开</value>
   </data>
   <data name="ContextMenu_OpenWorkspace" xml:space="preserve">
-    <value>作为 cmux 工作区打开</value>
+    <value>在 cmux 新工作区中打开</value>
   </data>
   <data name="Settings_ContextMenuFailed" xml:space="preserve">
     <value>无法更新右键菜单，详见日志。</value>
@@ -187,13 +187,94 @@
   <data name="Pane_Terminal" xml:space="preserve">
     <value>终端</value>
   </data>
+  <data name="Terminal_Exited" xml:space="preserve">
+    <value>已退出</value>
+  </data>
   <data name="Pane_Browser" xml:space="preserve">
     <value>浏览器</value>
   </data>
   <data name="Pane_Pane" xml:space="preserve">
     <value>窗格</value>
   </data>
-  <data name="Pane_BrowserUnavailable" xml:space="preserve">
-    <value>Windows 前端暂不支持浏览器窗格。</value>
+  <data name="Screen_Screen" xml:space="preserve">
+    <value>屏幕</value>
+  </data>
+  <data name="Screen_New" xml:space="preserve">
+    <value>新建屏幕</value>
+  </data>
+  <data name="Screen_Rename" xml:space="preserve">
+    <value>重命名屏幕</value>
+  </data>
+  <data name="Screen_Close" xml:space="preserve">
+    <value>关闭屏幕</value>
+  </data>
+  <data name="Workspace_Rename" xml:space="preserve">
+    <value>重命名工作区</value>
+  </data>
+  <data name="Workspace_MoveUp" xml:space="preserve">
+    <value>上移</value>
+  </data>
+  <data name="Workspace_MoveDown" xml:space="preserve">
+    <value>下移</value>
+  </data>
+  <data name="Action_Save" xml:space="preserve">
+    <value>保存</value>
+  </data>
+  <data name="Action_Cancel" xml:space="preserve">
+    <value>取消</value>
+  </data>
+  <data name="Pane_NewBrowser" xml:space="preserve">
+    <value>新建浏览器</value>
+  </data>
+  <data name="Pane_BrowserStarting" xml:space="preserve">
+    <value>正在启动浏览器…</value>
+  </data>
+  <data name="Pane_Zoom" xml:space="preserve">
+    <value>切换窗格缩放</value>
+  </data>
+  <data name="Pane_Rename" xml:space="preserve">
+    <value>重命名窗格</value>
+  </data>
+  <data name="Tab_Rename" xml:space="preserve">
+    <value>重命名标签页</value>
+  </data>
+  <data name="Tab_MoveLeft" xml:space="preserve">
+    <value>向左移动</value>
+  </data>
+  <data name="Tab_MoveRight" xml:space="preserve">
+    <value>向右移动</value>
+  </data>
+  <data name="Tab_MoveToPane" xml:space="preserve">
+    <value>移动到窗格</value>
+  </data>
+  <data name="Tab_Close" xml:space="preserve">
+    <value>关闭标签页</value>
+  </data>
+  <data name="Browser_Address" xml:space="preserve">
+    <value>输入地址</value>
+  </data>
+  <data name="Browser_Error" xml:space="preserve">
+    <value>浏览器错误</value>
+  </data>
+  <data name="Browser_Back" xml:space="preserve">
+    <value>后退</value>
+  </data>
+  <data name="Browser_Forward" xml:space="preserve">
+    <value>前进</value>
+  </data>
+  <data name="Browser_Reload" xml:space="preserve">
+    <value>重新加载</value>
+  </data>
+  <data name="Browser_Go" xml:space="preserve">
+    <value>转到</value>
+  </data>
+  <data name="Browser_Open" xml:space="preserve">
+    <value>打开</value>
+  </data>
+  <data name="Settings_Accent" xml:space="preserve">
+    <value>强调色</value>
+  </data>
+  <data name="Settings_ResetAppearance" xml:space="preserve">
+    <value>恢复系统与 Ghostty 默认外观</value>
   </data>
 </root>

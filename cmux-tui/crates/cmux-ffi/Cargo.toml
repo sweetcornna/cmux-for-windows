@@ -17,3 +17,6 @@ workspace = true
 [dependencies]
 cmux-tui-core.workspace = true
 ghostty-vt.workspace = true
+
+[dev-dependencies]
+serde_json.workspace = true

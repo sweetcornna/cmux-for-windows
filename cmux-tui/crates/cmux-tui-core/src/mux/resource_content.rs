@@ -12,10 +12,10 @@ use crate::resource::{
 };
 use crate::resource_api::{public_terminal_snapshot, terminal_tab_ids_in_canonical_order};
 use crate::workspace_registry::{
-    RegistryBrowser, RegistryBrowserLaunch, RegistryBrowserSource, RegistryBrowserStatus,
-    RegistryLayoutNode, RegistryPane, RegistryScreen, RegistryTab, RegistryViewport,
-    RegistryViewportColumn, RegistryWorkspace, ResourceChange, ResourcePatch, ResourcePatchCommit,
-    WorkspaceMutation, WorkspaceRegistry,
+    RegistryBrowser, RegistryBrowserLaunch, RegistryBrowserReconnect, RegistryBrowserSource,
+    RegistryBrowserStatus, RegistryLayoutNode, RegistryPane, RegistryScreen, RegistryTab,
+    RegistryViewport, RegistryViewportColumn, RegistryWorkspace, ResourceChange, ResourcePatch,
+    ResourcePatchCommit, WorkspaceMutation, WorkspaceRegistry,
 };
 use crate::{ResourceSelectors, ResourceTarget};
 
@@ -812,6 +812,10 @@ impl Mux {
                                     browser.source = match source {
                                         BrowserSource::External => RegistryBrowserSource::External,
                                         BrowserSource::Launched => RegistryBrowserSource::Launched,
+                                        BrowserSource::Native => {
+                                            browser.reconnect = RegistryBrowserReconnect::Frontend;
+                                            RegistryBrowserSource::Native
+                                        }
                                     };
                                 }
                                 changes.push(ResourceChange::UpsertBrowser(browser));
@@ -882,6 +886,7 @@ impl Mux {
                                             match browser.source {
                                                 RegistryBrowserSource::External => "external",
                                                 RegistryBrowserSource::Launched => "launched",
+                                                RegistryBrowserSource::Native => "native",
                                                 RegistryBrowserSource::Unknown => {
                                                     match browser.launch {
                                                         RegistryBrowserLaunch::Create => "launched",

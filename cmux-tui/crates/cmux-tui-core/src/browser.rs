@@ -20,6 +20,7 @@ use crate::{Mux, MuxEvent, SurfaceId};
 pub enum BrowserSource {
     External,
     Launched,
+    Native,
 }
 
 impl BrowserSource {
@@ -27,8 +28,15 @@ impl BrowserSource {
         match self {
             BrowserSource::External => "external",
             BrowserSource::Launched => "launched",
+            BrowserSource::Native => "native",
         }
     }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum BrowserBackend {
+    Cdp,
+    Native,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -948,6 +956,49 @@ pub(crate) fn new_surface_with_resource_identity(
     mux: Weak<Mux>,
     resource_identity: TabResourceIdentity,
 ) -> anyhow::Result<Arc<Surface>> {
+    new_surface_with_backend(
+        id,
+        url,
+        size,
+        cell_pixels,
+        opts,
+        mux,
+        resource_identity,
+        BrowserBackend::Cdp,
+    )
+}
+
+pub(crate) fn new_native_surface_with_resource_identity(
+    id: SurfaceId,
+    url: String,
+    size: (u16, u16),
+    cell_pixels: (u16, u16),
+    opts: &SurfaceOptions,
+    mux: Weak<Mux>,
+    resource_identity: TabResourceIdentity,
+) -> anyhow::Result<Arc<Surface>> {
+    new_surface_with_backend(
+        id,
+        url,
+        size,
+        cell_pixels,
+        opts,
+        mux,
+        resource_identity,
+        BrowserBackend::Native,
+    )
+}
+
+fn new_surface_with_backend(
+    id: SurfaceId,
+    url: String,
+    size: (u16, u16),
+    cell_pixels: (u16, u16),
+    opts: &SurfaceOptions,
+    mux: Weak<Mux>,
+    resource_identity: TabResourceIdentity,
+    backend: BrowserBackend,
+) -> anyhow::Result<Arc<Surface>> {
     if !matches!(resource_identity.content_id, crate::resource::ContentPublicId::Browser(_)) {
         anyhow::bail!("browser surface cannot use a terminal resource identity");
     }
@@ -1012,9 +1063,15 @@ pub(crate) fn new_surface_with_resource_identity(
             next_reconfigure_id: 1,
             reconfigure_failure: None,
             page_viewport: None,
-            status: BrowserStatus::Starting,
+            status: match backend {
+                BrowserBackend::Cdp => BrowserStatus::Starting,
+                BrowserBackend::Native => BrowserStatus::Live,
+            },
             failure_kind: None,
-            source: None,
+            source: match backend {
+                BrowserBackend::Cdp => None,
+                BrowserBackend::Native => Some(BrowserSource::Native),
+            },
             next_frame_seq: 1,
             live_since: None,
             last_frame_at: None,
@@ -1033,15 +1090,18 @@ pub(crate) fn new_surface_with_resource_identity(
         #[cfg(test)]
         worker_done: Mutex::new(Some(worker_done_rx)),
     }));
-    start_browser_worker(
-        surface.clone(),
-        command_rx,
-        command_order,
-        latest_nav,
-        latest_authority,
-        mux,
-        worker_done_tx,
-    );
+    match backend {
+        BrowserBackend::Cdp => start_browser_worker(
+            surface.clone(),
+            command_rx,
+            command_order,
+            latest_nav,
+            latest_authority,
+            mux,
+            worker_done_tx,
+        ),
+        BrowserBackend::Native => drop(command_rx),
+    }
     Ok(surface)
 }
 
@@ -2069,7 +2129,20 @@ impl BrowserSurface {
     }
 
     pub fn source(&self) -> Option<BrowserSource> {
-        self.session.lock().unwrap().as_ref().map(|session| session.runtime.source())
+        self.state.lock().unwrap().source
+    }
+
+    pub(crate) fn commit_native_url(&self, url: &str) -> anyhow::Result<()> {
+        let normalized = normalize_url(url);
+        let mut state = self.state.lock().unwrap();
+        anyhow::ensure!(state.source == Some(BrowserSource::Native), "browser is not native");
+        if state.url != normalized {
+            state.url = normalized.clone();
+            state.title = normalized;
+            self.mark_state_dirty_locked(&mut state);
+            self.dirty.store(true, Ordering::Release);
+        }
+        Ok(())
     }
 
     pub fn size(&self) -> (u16, u16) {
@@ -5189,7 +5262,7 @@ fn frames_stalled_locked(state: &BrowserState, now: Instant, dead: bool) -> bool
     if dead || !matches!(state.status, BrowserStatus::Live) {
         return false;
     }
-    if state.source == Some(BrowserSource::Launched) {
+    if matches!(state.source, Some(BrowserSource::Launched | BrowserSource::Native)) {
         return false;
     }
     let Some(since) = state.last_frame_at.or(state.live_since) else {

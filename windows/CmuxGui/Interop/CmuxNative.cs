@@ -16,14 +16,24 @@ internal static partial class CmuxNative
     public const int ErrorCapacity = -3;
 
     [StructLayout(LayoutKind.Sequential)]
-    public struct Cell
+    public unsafe struct Cell
     {
         public uint Ch;
         public uint Fg;
         public uint Bg;
         public ushort Attrs;
         public byte Width;
-        public byte Reserved;
+        public byte Underline;
+        public byte RowFlags;
+        public fixed byte TextUtf8[32];
+    }
+
+    public static unsafe string TextOf(in Cell cell)
+    {
+        fixed (byte* p = cell.TextUtf8)
+        {
+            return DecodeUtf8(p, 32);
+        }
     }
 
     [StructLayout(LayoutKind.Sequential)]
@@ -35,10 +45,11 @@ internal static partial class CmuxNative
         public ushort CursorRow;
         public byte CursorVisible;
         public byte Dirty;
-        public byte Reserved0;
-        public byte Reserved1;
+        public byte CursorShape;
+        public byte CursorBlink;
         public uint DefaultFg;
         public uint DefaultBg;
+        public uint CursorColor;
     }
 
     [StructLayout(LayoutKind.Sequential)]
@@ -108,11 +119,36 @@ internal static partial class CmuxNative
     [LibraryImport(Library, EntryPoint = "cmux_mux_open")]
     public static partial IntPtr MuxOpen();
 
+    [LibraryImport(Library, EntryPoint = "cmux_mux_open_named")]
+    public static partial IntPtr MuxOpenNamed(ReadOnlySpan<byte> name, nuint nameLen);
+
+    [LibraryImport(Library, EntryPoint = "cmux_mux_open_transient_named")]
+    public static partial IntPtr MuxOpenTransientNamed(ReadOnlySpan<byte> name, nuint nameLen);
+
     [LibraryImport(Library, EntryPoint = "cmux_mux_free")]
     public static partial void MuxFree(IntPtr mux);
 
     [LibraryImport(Library, EntryPoint = "cmux_mux_last_error")]
     public static partial int MuxLastError(IntPtr mux, Span<byte> buffer, nuint capacity);
+
+    [LibraryImport(Library, EntryPoint = "cmux_mux_apply_theme_text")]
+    public static partial int MuxApplyThemeText(
+        IntPtr mux,
+        ReadOnlySpan<byte> text,
+        nuint len);
+
+    [LibraryImport(Library, EntryPoint = "cmux_mux_resource_request_json")]
+    public static partial int MuxResourceRequestJson(
+        IntPtr mux,
+        ReadOnlySpan<byte> request,
+        nuint requestLen,
+        out IntPtr response);
+
+    [LibraryImport(Library, EntryPoint = "cmux_json_response_copy")]
+    public static partial int JsonResponseCopy(IntPtr response, Span<byte> buffer, nuint capacity);
+
+    [LibraryImport(Library, EntryPoint = "cmux_json_response_free")]
+    public static partial void JsonResponseFree(IntPtr response);
 
     [LibraryImport(Library, EntryPoint = "cmux_mux_workspace_count")]
     public static partial int MuxWorkspaceCount(IntPtr mux);
@@ -200,11 +236,31 @@ internal static partial class CmuxNative
     [LibraryImport(Library, EntryPoint = "cmux_session_write")]
     public static partial int SessionWrite(IntPtr session, ReadOnlySpan<byte> bytes, nuint len);
 
+    [LibraryImport(Library, EntryPoint = "cmux_session_paste")]
+    public static partial int SessionPaste(IntPtr session, ReadOnlySpan<byte> bytes, nuint len);
+
+    [LibraryImport(Library, EntryPoint = "cmux_session_key")]
+    public static partial int SessionKey(IntPtr session, ReadOnlySpan<byte> chord, nuint chordLen);
+
+    [LibraryImport(Library, EntryPoint = "cmux_session_key_event")]
+    public static partial int SessionKeyEvent(
+        IntPtr session,
+        ReadOnlySpan<byte> chord,
+        nuint chordLen,
+        byte action);
+
+    [LibraryImport(Library, EntryPoint = "cmux_session_mouse")]
+    public static partial int SessionMouse(
+        IntPtr session,
+        byte kind,
+        ushort column,
+        ushort row,
+        byte button,
+        byte modifiers,
+        int deltaRows);
+
     [LibraryImport(Library, EntryPoint = "cmux_session_resize")]
     public static partial int SessionResize(IntPtr session, ushort cols, ushort rows);
-
-    [LibraryImport(Library, EntryPoint = "cmux_session_apply_theme_text", StringMarshalling = StringMarshalling.Utf8)]
-    public static partial int SessionApplyThemeText(IntPtr session, ReadOnlySpan<byte> text, nuint len);
 
     [LibraryImport(Library, EntryPoint = "cmux_session_snapshot")]
     public static partial int SessionSnapshot(

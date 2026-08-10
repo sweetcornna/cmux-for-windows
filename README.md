@@ -11,11 +11,13 @@ A native Windows terminal workspace built with WinUI 3, ConPTY, Rust, and Ghostt
 
 - Native WinUI 3 desktop interface for Windows 10 version 2004 or newer.
 - Real Windows pseudoterminals through ConPTY.
-- Workspaces, split panes, terminal tabs, keyboard input, and mouse input.
+- Workspaces, screens, draggable split panes, and terminal and WebView2 browser tabs.
+- Native keyboard, mouse, selection, clipboard, pane-focus, and pane-zoom interactions with uniformly sized compact action buttons and neutral pane borders.
+- Stable live terminal and browser controls during topology polling and split-layout changes, with selected terminal canvases attached only after their hosts load so new tabs render immediately and reparented output does not stretch.
 - Durable workspace topology across app restarts; restored terminals start fresh shells.
-- Ghostty-compatible colors, fonts, palettes, bundled themes, and custom themes.
+- Ghostty-compatible colors, fonts, palettes, bundled themes, and custom themes applied consistently to existing and newly created terminals, plus a live custom accent for shell actions and settings controls.
 - English and Simplified Chinese interface strings.
-- Optional Explorer context-menu integration for opening a folder in cmux.
+- Optional Explorer integration in the Windows 11 first-level context menu, with a classic-menu fallback on Windows 10.
 - A standalone `cmux-tui.exe` and local resource CLI for terminal automation.
 
 ## Project status
@@ -25,11 +27,11 @@ The Windows GUI and local multiplexer are usable, but this fork does not provide
 | Area | Status |
 | --- | --- |
 | Native WinUI 3 GUI | Supported |
-| Local workspaces, panes, tabs, and terminals | Supported |
+| Local workspaces, screens, panes, tabs, and terminals | Supported |
 | ConPTY shell sessions | Supported |
+| Native WebView2 browser panes | Supported in the WinUI GUI; requires the Microsoft Edge WebView2 Runtime |
 | Workspace topology restoration | Supported; processes and scrollback are not restored |
 | Local control socket and resource CLI | Supported |
-| Browser panes through Chrome DevTools Protocol | Experimental and not covered by Windows CI |
 | Remote daemon, SSH, forwarding, enrollment, and relay | Not included |
 | Cloud machine providers and machine agent | Not included |
 | macOS and iOS applications | Not included |
@@ -51,9 +53,9 @@ Only 64-bit Windows builds using Rust's `x86_64-pc-windows-gnu` target are suppo
 
 4. Run the installer.
 
-The installer is per-user, installs under `%LOCALAPPDATA%\Programs\cmux`, and does not require administrator privileges. Public releases are currently unsigned, so Windows may show an unknown-publisher warning. Verify the SHA-256 value before continuing.
+The installer is per-user, installs under `%LOCALAPPDATA%\Programs\cmux`, and does not require administrator privileges. Public Setup executables are currently unsigned, so Windows may show an unknown-publisher warning. Verify the SHA-256 value before continuing.
 
-Upgrades preserve settings and workspace data. Uninstalling also preserves them deliberately.
+To register the Windows 11 first-level Explorer command without converting the application to MSIX, Setup installs a signed sparse identity package and trusts only its public signing certificate in the current user's `TrustedPeople` store. Setup removes an obsolete `cmux.Windows` full development MSIX during migration so Windows Search has only the installed shortcut, and that shortcut and the Explorer fallbacks reference the standalone upstream cmux icon explicitly. Uninstall removes the sparse package and that current-user certificate. Upgrades preserve settings and workspace data; uninstalling preserves that user data deliberately.
 
 ## Run the TUI
 

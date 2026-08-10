@@ -11,7 +11,17 @@ $actual = (Get-FileHash $setup -Algorithm SHA256).Hash.ToLowerInvariant()
 if ($actual -ne $expected) { throw "SHA-256 mismatch" }
 ```
 
-A matching hash verifies the downloaded bytes against the value published by this repository; it is not a substitute for Authenticode identity.
+A matching hash verifies the downloaded bytes against the value published by this repository; it is not a substitute for Authenticode identity. The embedded sparse Explorer package is signed separately because Windows requires package identity for the Windows 11 menu; Setup trusts that exact public certificate only for the current user.
+
+## The cmux commands appear only under “Show more options”
+
+The first-level Windows 11 new-window and new-workspace commands require the sparse companion package in addition to the classic registry verbs. Confirm that Explorer integration is enabled in cmux Settings and that the package is registered:
+
+```powershell
+Get-AppxPackage -Name cmux.Windows.ShellIntegration
+```
+
+If it is missing, reinstall the current Setup build. If it is present, disable and re-enable Explorer integration, then open a fresh Explorer window. Windows 10 intentionally uses the classic menu only.
 
 ## The GUI opens without a working terminal
 
@@ -22,7 +32,7 @@ cargo build --manifest-path .\cmux-tui\Cargo.toml -p cmux-ffi --target x86_64-pc
 dotnet build .\windows\CmuxGui\CmuxGui.csproj -c Debug -r win-x64
 ```
 
-Review `%LOCALAPPDATA%\cmux-gui.log` for startup and topology errors. Do not post the log publicly without checking it for local paths or other sensitive context.
+Review `%LOCALAPPDATA%\cmux-gui.log` for startup and topology errors. A newly selected terminal should progress from `TerminalView ctor` and `Loaded` to `CreateResources`, `SyncGrid`, and a nonzero `TabOpen`; if it stops after `Loaded`, rebuild or reinstall a current version containing the deferred Win2D canvas attachment fix. Do not post the log publicly without checking it for local paths or other sensitive context.
 
 ## No preferred shell starts
 
@@ -69,11 +79,17 @@ Windows does not allow deletion while a process still holds a file or directory 
 
 ## Explorer integration points to an old installation
 
-Run the installed application once after an upgrade. Setup invokes `CmuxGui.exe --repair-shell` and repairs the executable path only when Explorer integration had already been enabled. You can also disable and re-enable the integration from Settings.
+Setup re-registers the sparse package and invokes `CmuxGui.exe --repair-shell`, which preserves the enabled state and repairs the classic fallback's executable and standalone icon paths. You can also disable and re-enable the integration from Settings.
+
+## Windows Search shows an old icon or two cmux applications
+
+Older development builds could leave the full `cmux.Windows` MSIX installed beside the public per-user application. That package creates a separate Windows Search entry and can retain its old icon independently of the current executable. Reinstall the current Setup build; installation removes the obsolete full development package and recreates the Start menu shortcut with an explicit upstream cmux ICO. `Get-StartApps | Where-Object Name -Match cmux` should then return only the installed executable entry.
 
 ## Browser panes do not work
 
-Browser panes are experimental on Windows and are not part of the focused CI gate. Confirm a Chrome-family browser is installed. The default persistent profile is under `%LOCALAPPDATA%\cmux-tui\chrome-profile`; Chrome 136 and newer will not allow remote debugging against the normal OS-default profile.
+The native GUI uses the Microsoft Edge WebView2 Runtime, not Chrome remote debugging. If a browser tab reports an initialization error, confirm that the WebView2 Runtime is installed and repair or update it through the normal Microsoft Edge maintenance path. Browser page state and back/forward history are live process state; after restart, cmux restores the tab at its last durable URL.
+
+The standalone TUI has a separate experimental Chrome DevTools Protocol transport and may use `%LOCALAPPDATA%\cmux-tui\chrome-profile`. That profile is not used by WinUI browser panes.
 
 ## Where to report a bug
 

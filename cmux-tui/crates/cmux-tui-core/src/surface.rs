@@ -5223,6 +5223,13 @@ impl Surface {
         browser.navigate_confirmed(url)
     }
 
+    pub(crate) fn browser_commit_native_url(&self, url: &str) -> anyhow::Result<()> {
+        let Some(browser) = self.as_browser() else {
+            anyhow::bail!("PTY surface is not a browser surface");
+        };
+        browser.commit_native_url(url)
+    }
+
     pub(crate) fn browser_back_confirmed(&self) -> anyhow::Result<()> {
         let Some(browser) = self.as_browser() else {
             anyhow::bail!("PTY surface is not a browser surface");
