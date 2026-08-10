@@ -33,7 +33,7 @@
                         <Grid.ColumnDefinitions>
                             <ColumnDefinition Width="Auto" />
                             <ColumnDefinition Width="*" />
-                            <ColumnDefinition Width="Auto" />
+                            <ColumnDefinition Width="200" />
                         </Grid.ColumnDefinitions>
                         <FontIcon Grid.Column="0" Glyph="&#xE790;" FontSize="18" />
                         <StackPanel Grid.Column="1" VerticalAlignment="Center">
@@ -53,7 +53,7 @@
                     <Grid ColumnSpacing="16">
                         <Grid.ColumnDefinitions>
                             <ColumnDefinition Width="*" />
-                            <ColumnDefinition Width="Auto" />
+                            <ColumnDefinition Width="120" />
                         </Grid.ColumnDefinitions>
                         <TextBlock x:Name="TermBgLabel" VerticalAlignment="Center" />
                         <Button x:Name="TermBgButton" Grid.Column="1" MinWidth="120">
@@ -69,7 +69,7 @@
                     <Grid ColumnSpacing="16">
                         <Grid.ColumnDefinitions>
                             <ColumnDefinition Width="*" />
-                            <ColumnDefinition Width="Auto" />
+                            <ColumnDefinition Width="120" />
                         </Grid.ColumnDefinitions>
                         <TextBlock x:Name="TermFgLabel" VerticalAlignment="Center" />
                         <Button x:Name="TermFgButton" Grid.Column="1" MinWidth="120">
@@ -85,7 +85,7 @@
                     <Grid ColumnSpacing="16">
                         <Grid.ColumnDefinitions>
                             <ColumnDefinition Width="*" />
-                            <ColumnDefinition Width="Auto" />
+                            <ColumnDefinition Width="120" />
                         </Grid.ColumnDefinitions>
                         <TextBlock x:Name="AccentLabel" VerticalAlignment="Center" />
                         <Button x:Name="AccentButton" Grid.Column="1" MinWidth="120">
@@ -110,7 +110,7 @@
                         <Grid.ColumnDefinitions>
                             <ColumnDefinition Width="Auto" />
                             <ColumnDefinition Width="*" />
-                            <ColumnDefinition Width="Auto" />
+                            <ColumnDefinition Width="200" />
                         </Grid.ColumnDefinitions>
                         <FontIcon Grid.Column="0" Glyph="&#xEB9F;" FontSize="18" />
                         <StackPanel Grid.Column="1" VerticalAlignment="Center">
@@ -119,7 +119,8 @@
                                        TextTrimming="CharacterEllipsis"
                                        Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
                         </StackPanel>
-                        <StackPanel Grid.Column="2" Orientation="Horizontal" Spacing="8">
+                        <StackPanel Grid.Column="2" Orientation="Horizontal" Spacing="8"
+                                    HorizontalAlignment="Right">
                             <Button x:Name="ChooseImageButton" Click="OnChooseImage" />
                             <Button x:Name="ClearImageButton" Click="OnClearImage" />
                         </StackPanel>
@@ -131,7 +132,7 @@
                     <Grid ColumnSpacing="16">
                         <Grid.ColumnDefinitions>
                             <ColumnDefinition Width="*" />
-                            <ColumnDefinition Width="Auto" />
+                            <ColumnDefinition Width="120" />
                         </Grid.ColumnDefinitions>
                         <TextBlock x:Name="TermMaskLabel" VerticalAlignment="Center" />
                         <Button x:Name="TermMaskButton" Grid.Column="1" MinWidth="120">
@@ -156,7 +157,7 @@
                         <Grid.ColumnDefinitions>
                             <ColumnDefinition Width="Auto" />
                             <ColumnDefinition Width="*" />
-                            <ColumnDefinition Width="Auto" />
+                            <ColumnDefinition Width="200" />
                         </Grid.ColumnDefinitions>
                         <FontIcon Grid.Column="0" Glyph="&#xE790;" FontSize="18" />
                         <StackPanel Grid.Column="1" VerticalAlignment="Center">
@@ -165,7 +166,8 @@
                                        TextTrimming="CharacterEllipsis"
                                        Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
                         </StackPanel>
-                        <StackPanel Grid.Column="2" Orientation="Horizontal" Spacing="8">
+                        <StackPanel Grid.Column="2" Orientation="Horizontal" Spacing="8"
+                                    HorizontalAlignment="Right">
                             <Button x:Name="ChooseAppImageButton" Click="OnChooseAppImage" />
                             <Button x:Name="ClearAppImageButton" Click="OnClearAppImage" />
                         </StackPanel>
@@ -175,7 +177,7 @@
                     <Grid ColumnSpacing="16">
                         <Grid.ColumnDefinitions>
                             <ColumnDefinition Width="*" />
-                            <ColumnDefinition Width="Auto" />
+                            <ColumnDefinition Width="120" />
                         </Grid.ColumnDefinitions>
                         <TextBlock x:Name="AppBgLabel" VerticalAlignment="Center" />
                         <Button x:Name="AppBgButton" Grid.Column="1" MinWidth="120">
@@ -193,7 +195,7 @@
                     <Grid ColumnSpacing="16">
                         <Grid.ColumnDefinitions>
                             <ColumnDefinition Width="*" />
-                            <ColumnDefinition Width="Auto" />
+                            <ColumnDefinition Width="120" />
                         </Grid.ColumnDefinitions>
                         <TextBlock x:Name="AppMaskLabel" VerticalAlignment="Center" />
                         <Button x:Name="AppMaskButton" Grid.Column="1" MinWidth="120">
@@ -246,7 +248,7 @@
                         <Grid.ColumnDefinitions>
                             <ColumnDefinition Width="Auto" />
                             <ColumnDefinition Width="*" />
-                            <ColumnDefinition Width="Auto" />
+                            <ColumnDefinition Width="200" />
                         </Grid.ColumnDefinitions>
                         <FontIcon Grid.Column="0" Glyph="&#xE71D;" FontSize="18" VerticalAlignment="Center" />
                         <StackPanel Grid.Column="1" VerticalAlignment="Center">
@@ -256,7 +258,8 @@
                                        Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
                         </StackPanel>
                         <ToggleSwitch x:Name="ContextMenuToggle" Grid.Column="2"
-                                      VerticalAlignment="Center" Toggled="OnContextMenuToggled" />
+                                      HorizontalAlignment="Right" VerticalAlignment="Center"
+                                      Toggled="OnContextMenuToggled" />
                     </Grid>
                     <TextBlock x:Name="ContextMenuStatus" TextWrapping="Wrap"
                                Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
@@ -270,7 +273,7 @@
                         <Grid.ColumnDefinitions>
                             <ColumnDefinition Width="Auto" />
                             <ColumnDefinition Width="*" />
-                            <ColumnDefinition Width="Auto" />
+                            <ColumnDefinition Width="200" />
                         </Grid.ColumnDefinitions>
                         <FontIcon Grid.Column="0" Glyph="&#xF2B7;" FontSize="18" />
                         <StackPanel Grid.Column="1" VerticalAlignment="Center">

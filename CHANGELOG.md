@@ -6,6 +6,12 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ## [Unreleased]
 
+## [0.3.2] - 2026-08-10
+
+### Fixed
+
+- Reserved explicit settings-card action widths so color controls, image actions, switches, and selectors remain fully visible when the window is maximized.
+
 ## [0.3.1] - 2026-08-09
 
 ### Fixed
