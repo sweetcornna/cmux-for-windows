@@ -16,8 +16,11 @@
         </Style>
     </Page.Resources>
 
-    <ScrollViewer Padding="36,20,36,32">
-        <StackPanel Spacing="2" MaxWidth="1000">
+    <ScrollViewer Padding="36,20,36,32"
+                  HorizontalScrollBarVisibility="Disabled"
+                  HorizontalScrollMode="Disabled"
+                  HorizontalContentAlignment="Stretch">
+        <StackPanel Spacing="2" MaxWidth="1000" HorizontalAlignment="Stretch">
 
             <TextBlock x:Name="TitleText" Style="{StaticResource TitleTextBlockStyle}" Margin="0,0,0,18" />
 

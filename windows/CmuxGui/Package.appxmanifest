@@ -13,7 +13,7 @@
   <Identity
     Name="cmux.Windows"
     Publisher="CN=cmux Development"
-    Version="0.3.0.0" />
+    Version="0.3.1.0" />
 
   <Properties>
     <DisplayName>cmux for Windows</DisplayName>

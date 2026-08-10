@@ -88,6 +88,8 @@ The GUI stores application settings separately from the TUI configuration. Bundl
 
 The application accent is a shared mutable `SolidColorBrush` initialized after the first window's XAML tree exists. Explicitly supported shell actions and settings controls retain that brush instance, so changing its color repaints them immediately without replacing WinUI resource dictionaries or forcing a theme transition.
 
+The settings surface scrolls vertically and constrains its content to the current viewport width. Resizing or maximizing the window therefore reflows right-aligned controls instead of creating clipped horizontal overflow.
+
 ## Security boundaries
 
 - Terminal keyboard and character content must never enter the diagnostic log.

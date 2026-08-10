@@ -6,6 +6,12 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ## [Unreleased]
 
+## [0.3.1] - 2026-08-09
+
+### Fixed
+
+- Kept settings controls within the visible page width when resizing or maximizing the window.
+
 ## [0.3.0] - 2026-08-09
 
 ### Added
