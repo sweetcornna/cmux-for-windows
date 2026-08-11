@@ -75,7 +75,9 @@ public sealed partial class TerminalView : UserControl, IDisposable
     private bool _suppressStructuredCharacter;
     private bool _postArrangeRefreshPending;
     private bool _canvasAttached;
+    private bool _hostActive;
     private bool _disposed;
+    private int _loadGeneration;
 
     internal TerminalView(MuxRuntime mux, string tabId)
     {
@@ -169,6 +171,25 @@ public sealed partial class TerminalView : UserControl, IDisposable
 
     public string TabId => _tabId;
 
+    internal void SetHostActive(bool active)
+    {
+        if (_disposed)
+        {
+            return;
+        }
+        _hostActive = active;
+        if (!active)
+        {
+            _timer.Stop();
+            return;
+        }
+        if (IsLoaded)
+        {
+            _timer.Start();
+            RequestPostArrangeRefresh();
+        }
+    }
+
     private void OnCreateResources(CanvasControl sender, Microsoft.Graphics.Canvas.UI.CanvasCreateResourcesEventArgs args)
     {
         // Adopt the user's Ghostty font and colours. The engine already resolves
@@ -215,7 +236,8 @@ public sealed partial class TerminalView : UserControl, IDisposable
 
     private void OnLoaded(object sender, RoutedEventArgs e)
     {
-        Diag.Log($"Loaded size={ActualWidth}x{ActualHeight}");
+        _loadGeneration++;
+        Diag.Log($"Loaded generation={_loadGeneration} size={ActualWidth}x{ActualHeight}");
         RequestPostArrangeRefresh();
         if (!_canvasAttached)
         {
@@ -231,19 +253,35 @@ public sealed partial class TerminalView : UserControl, IDisposable
                 RequestPostArrangeRefresh();
             });
         }
-        _timer.Start();
-        // Loaded can run before the window is activated, and focus does not
-        // stick then. Queue a second attempt once the tree is live.
-        TakeFocus("loaded", FocusState.Programmatic);
-        DispatcherQueue.TryEnqueue(() => TakeFocus("queued", FocusState.Programmatic));
+        if (_hostActive)
+        {
+            _timer.Start();
+        }
     }
 
-    private void OnUnloaded(object sender, RoutedEventArgs e) => _timer.Stop();
+    private void OnUnloaded(object sender, RoutedEventArgs e)
+    {
+        var generation = _loadGeneration;
+        DispatcherQueue.TryEnqueue(() =>
+        {
+            if (!_disposed && !IsLoaded && _loadGeneration == generation)
+            {
+                _timer.Stop();
+            }
+        });
+    }
 
     private void OnCanvasSizeChanged(object sender, SizeChangedEventArgs e) =>
         RequestPostArrangeRefresh();
 
-    internal void NotifyHostReparented() => RequestPostArrangeRefresh();
+    internal void NotifyHostReparented()
+    {
+        RequestPostArrangeRefresh();
+        if (_hostActive && IsLoaded)
+        {
+            _timer.Start();
+        }
+    }
 
     private void RequestPostArrangeRefresh()
     {
@@ -414,7 +452,7 @@ public sealed partial class TerminalView : UserControl, IDisposable
 
     private void Poll(bool forceInvalidate = false)
     {
-        if (_session == IntPtr.Zero)
+        if (_disposed || !_hostActive || !IsLoaded || _session == IntPtr.Zero)
         {
             return;
         }
@@ -698,28 +736,80 @@ public sealed partial class TerminalView : UserControl, IDisposable
         return cell.Bg;
     }
 
+    internal void ForwardKeyDown(KeyRoutedEventArgs args) => OnKeyDown(this, args);
+
+    internal bool ForwardKeyDown(
+        VirtualKey key,
+        Windows.UI.Core.CorePhysicalKeyStatus status) =>
+        HandleKeyDown(key, status);
+
+    internal void ForwardKeyUp(KeyRoutedEventArgs args) => OnKeyUp(this, args);
+
+    internal bool ForwardKeyUp(
+        VirtualKey key,
+        Windows.UI.Core.CorePhysicalKeyStatus status) =>
+        HandleKeyUp(key, status);
+
+    internal void ForwardCharacterReceived(CharacterReceivedRoutedEventArgs args) =>
+        OnCharacterReceived(this, args);
+
+    internal bool ForwardCharacterReceived(uint keyCode)
+    {
+        var text = keyCode <= char.MaxValue
+            ? ((char)keyCode).ToString()
+            : keyCode <= 0x10FFFF
+                ? char.ConvertFromUtf32((int)keyCode)
+                : string.Empty;
+        return text.Length > 0 && HandleCharacterReceived(text);
+    }
+
     private void OnCharacterReceived(UIElement sender, CharacterReceivedRoutedEventArgs args)
     {
+        if (HandleCharacterReceived(args.Character.ToString()))
+        {
+            args.Handled = true;
+        }
+    }
+
+    private bool HandleCharacterReceived(string text)
+    {
+        if (!_hostActive)
+        {
+            return false;
+        }
         if (_suppressStructuredCharacter)
         {
             _suppressStructuredCharacter = false;
-            args.Handled = true;
-            return;
+            return true;
         }
         // Printable input, including anything produced by an IME.
-        Send(Encoding.UTF8.GetBytes(args.Character.ToString()));
-        args.Handled = true;
+        Send(Encoding.UTF8.GetBytes(text));
+        return true;
     }
 
     private void OnKeyDown(object sender, KeyRoutedEventArgs e)
     {
-        var key = KeyName(e);
+        if (HandleKeyDown(e.Key, e.KeyStatus))
+        {
+            e.Handled = true;
+        }
+    }
+
+    private bool HandleKeyDown(
+        VirtualKey virtualKey,
+        Windows.UI.Core.CorePhysicalKeyStatus status)
+    {
+        if (!_hostActive)
+        {
+            return false;
+        }
+        var key = KeyName(virtualKey, status);
         var control = IsKeyDown(VirtualKey.Control);
         var alt = IsKeyDown(VirtualKey.Menu);
         var shift = IsKeyDown(VirtualKey.Shift);
-        if (key is null || (!control && !alt && IsPrintableKey(e.Key)))
+        if (key is null || (!control && !alt && IsPrintableKey(virtualKey)))
         {
-            return;
+            return false;
         }
 
         var chord = new StringBuilder();
@@ -737,8 +827,8 @@ public sealed partial class TerminalView : UserControl, IDisposable
         }
         chord.Append(key);
         var value = chord.ToString();
-        var identity = (e.Key, e.KeyStatus.ScanCode, e.KeyStatus.IsExtendedKey);
-        var action = e.KeyStatus.WasKeyDown ? (byte)2 : (byte)1;
+        var identity = (virtualKey, status.ScanCode, status.IsExtendedKey);
+        var action = status.WasKeyDown ? (byte)2 : (byte)1;
         _structuredKeysDown[identity] = value;
         if (NumpadProducesCharacter(key))
         {
@@ -746,17 +836,32 @@ public sealed partial class TerminalView : UserControl, IDisposable
             DispatcherQueue.TryEnqueue(() => _suppressStructuredCharacter = false);
         }
         SendKey(value, action);
-        e.Handled = true;
+        return true;
     }
 
     private void OnKeyUp(object sender, KeyRoutedEventArgs e)
     {
-        var identity = (e.Key, e.KeyStatus.ScanCode, e.KeyStatus.IsExtendedKey);
-        if (_structuredKeysDown.Remove(identity, out var chord))
+        if (HandleKeyUp(e.Key, e.KeyStatus))
         {
-            SendKey(chord, 0);
             e.Handled = true;
         }
+    }
+
+    private bool HandleKeyUp(
+        VirtualKey virtualKey,
+        Windows.UI.Core.CorePhysicalKeyStatus status)
+    {
+        if (!_hostActive)
+        {
+            return false;
+        }
+        var identity = (virtualKey, status.ScanCode, status.IsExtendedKey);
+        if (!_structuredKeysDown.Remove(identity, out var chord))
+        {
+            return false;
+        }
+        SendKey(chord, 0);
+        return true;
     }
 
     private static bool IsPrintableKey(VirtualKey key) =>
@@ -770,10 +875,11 @@ public sealed partial class TerminalView : UserControl, IDisposable
         or "numpadadd" or "numpadcomma" or "numpaddecimal" or "numpaddivide"
         or "numpadequal" or "numpadmultiply" or "numpadseparator" or "numpadsubtract";
 
-    private static string? KeyName(KeyRoutedEventArgs args)
+    private static string? KeyName(
+        VirtualKey key,
+        Windows.UI.Core.CorePhysicalKeyStatus status)
     {
-        var key = args.Key;
-        if (NumpadKeyName(key, args.KeyStatus) is { } numpad)
+        if (NumpadKeyName(key, status) is { } numpad)
         {
             return numpad;
         }

@@ -1,17 +1,65 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Runtime.InteropServices;
+using System.Text;
 using CmuxGui.Controls;
 using CmuxGui.Services;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Automation;
 using Microsoft.UI.Xaml.Controls;
+using Microsoft.UI.Xaml.Input;
 using Microsoft.UI.Xaml.Media;
+using Windows.Foundation;
+using Windows.System;
 
 namespace CmuxGui;
 
 public sealed partial class MainWindow : Window
 {
+    private const uint WmKeyDown = 0x0100;
+    private const uint WmKeyUp = 0x0101;
+    private const uint WmChar = 0x0102;
+    private const uint WmSysKeyDown = 0x0104;
+    private const uint WmSysKeyUp = 0x0105;
+    private const uint WmSysChar = 0x0106;
+    private const uint WmLeftButtonDown = 0x0201;
+    private const int WhMouseLl = 14;
+    private const uint WindowSubclassId = 1;
+
+    private delegate IntPtr WindowSubclassProc(
+        IntPtr window,
+        uint message,
+        IntPtr wParam,
+        IntPtr lParam,
+        UIntPtr subclassId,
+        UIntPtr referenceData);
+
+    private delegate IntPtr LowLevelMouseProc(
+        int code,
+        IntPtr wParam,
+        IntPtr lParam);
+
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private delegate bool EnumChildWindowProc(IntPtr window, IntPtr lParam);
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct NativePoint
+    {
+        public int X;
+        public int Y;
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct LowLevelMouseInput
+    {
+        public NativePoint Point;
+        public uint MouseData;
+        public uint Flags;
+        public uint Time;
+        public UIntPtr ExtraInfo;
+    }
+
     private sealed class WorkspaceEntry
     {
         public required MuxRuntime.WorkspaceInfo Workspace { get; set; }
@@ -21,7 +69,21 @@ public sealed partial class MainWindow : Window
 
     private readonly MuxRuntime _mux;
     private readonly Dictionary<string, WorkspaceEntry> _workspaces = [];
+    private readonly Grid _workspaceViewsHost = new();
     private readonly string? _launchFolder;
+    private WorkspaceView? _visibleWorkspace;
+    private WorkspaceView? _workspaceInputTarget;
+    private bool _workspaceInputBridgeActive;
+    private bool _workspacePointerDown;
+    private readonly WindowSubclassProc _windowSubclassProc;
+    private readonly LowLevelMouseProc _lowLevelMouseProc;
+    private IntPtr _windowHandle;
+    private IntPtr _inputSiteHandle;
+    private IntPtr _mouseHookHandle;
+    private VirtualKey? _bridgeCharacterKey;
+    private TerminalView? _nativePaneInputTarget;
+    private long _inputBridgeDeadline;
+    private readonly DispatcherTimer _inputBridgeTimer = new();
     private readonly DispatcherTimer _topologyTimer = new();
     private string _snapshotGeneration = string.Empty;
     private string _snapshotRevision = string.Empty;
@@ -34,6 +96,10 @@ public sealed partial class MainWindow : Window
     public MainWindow(string sessionName, string? launchFolder, bool persistentSession = true)
     {
         InitializeComponent();
+        _windowSubclassProc = HandleWindowMessage;
+        _lowLevelMouseProc = HandleLowLevelMouse;
+        _windowHandle = WinRT.Interop.WindowNative.GetWindowHandle(this);
+        WorkspaceHost.Content = _workspaceViewsHost;
         App.InitializeAccentBrush();
         NewWorkspaceButton.Foreground = App.AccentBrush;
         _launchFolder = launchFolder;
@@ -49,7 +115,18 @@ public sealed partial class MainWindow : Window
 
         Activated += OnWindowActivated;
         Closed += OnWindowClosed;
+        RootGrid.Loaded += OnRootGridLoaded;
+        Nav.AddHandler(UIElement.PointerPressedEvent, new PointerEventHandler(OnNavPointerPressed), true);
+        Nav.AddHandler(UIElement.PointerReleasedEvent, new PointerEventHandler(OnNavPointerReleased), true);
+        RootGrid.PreviewKeyDown += OnInputPreviewKeyDown;
+        RootGrid.AddHandler(UIElement.KeyUpEvent, new KeyEventHandler(OnInputKeyUp), true);
+        RootGrid.AddHandler(
+            UIElement.CharacterReceivedEvent,
+            new TypedEventHandler<UIElement, CharacterReceivedRoutedEventArgs>(OnInputCharacterReceived),
+            true);
         NavSearch.TextChanged += OnNavSearchChanged;
+        _inputBridgeTimer.Interval = TimeSpan.FromMilliseconds(300);
+        _inputBridgeTimer.Tick += OnInputBridgeTimerTick;
         _topologyTimer.Interval = TimeSpan.FromMilliseconds(750);
         _topologyTimer.Tick += OnTopologyTick;
 
@@ -57,21 +134,400 @@ public sealed partial class MainWindow : Window
         _topologyTimer.Start();
     }
 
+    private IntPtr HandleWindowMessage(
+        IntPtr window,
+        uint message,
+        IntPtr wParam,
+        IntPtr lParam,
+        UIntPtr subclassId,
+        UIntPtr referenceData)
+    {
+        if (message is WmChar or WmSysChar && _bridgeCharacterKey is not null)
+        {
+            _bridgeCharacterKey = null;
+            return IntPtr.Zero;
+        }
+
+        if (_workspaceInputBridgeActive
+            && _workspaceInputTarget is { } target
+            && ReferenceEquals(_visibleWorkspace, target))
+        {
+            if (message is WmKeyDown or WmSysKeyDown)
+            {
+                var key = (VirtualKey)(uint)wParam.ToInt64();
+                var status = PhysicalKeyStatusOf(lParam);
+                if (_nativePaneInputTarget is { } terminal
+                    ? terminal.ForwardKeyDown(key, status)
+                    : target.ForwardKeyDown(key, status))
+                {
+                    _bridgeCharacterKey = KeyCanProduceCharacter(key) ? key : null;
+                    return IntPtr.Zero;
+                }
+            }
+            else if (message is WmKeyUp or WmSysKeyUp)
+            {
+                var key = (VirtualKey)(uint)wParam.ToInt64();
+                if (_bridgeCharacterKey == key)
+                {
+                    _bridgeCharacterKey = null;
+                }
+                var status = PhysicalKeyStatusOf(lParam);
+                if (_nativePaneInputTarget is { } terminal
+                    ? terminal.ForwardKeyUp(key, status)
+                    : target.ForwardKeyUp(key, status))
+                {
+                    return IntPtr.Zero;
+                }
+            }
+            else if (message is WmChar or WmSysChar)
+            {
+                var keyCode = (uint)wParam.ToInt64();
+                if (_nativePaneInputTarget is { } terminal
+                    ? terminal.ForwardCharacterReceived(keyCode)
+                    : target.ForwardCharacterReceived(keyCode))
+                {
+                    return IntPtr.Zero;
+                }
+            }
+        }
+
+        return DefSubclassProc(window, message, wParam, lParam);
+    }
+
+    private IntPtr HandleLowLevelMouse(
+        int code,
+        IntPtr wParam,
+        IntPtr lParam)
+    {
+        if (code >= 0
+            && unchecked((uint)wParam.ToInt64()) == WmLeftButtonDown
+            && !_closed
+            && _windowActivated
+            && _windowHandle != IntPtr.Zero
+            && GetForegroundWindow() == _windowHandle)
+        {
+            var input = Marshal.PtrToStructure<LowLevelMouseInput>(lParam);
+            BeginNativeWorkspacePointer(input.Point);
+        }
+
+        return CallNextHookEx(_mouseHookHandle, code, wParam, lParam);
+    }
+
+    private void BeginNativeWorkspacePointer(NativePoint screenPoint)
+    {
+        if (_closed || _windowHandle == IntPtr.Zero || RootGrid.XamlRoot is null)
+        {
+            return;
+        }
+
+        if (!ScreenToClient(_windowHandle, ref screenPoint))
+        {
+            return;
+        }
+
+        var scale = RootGrid.XamlRoot.RasterizationScale;
+        var rootPoint = new Point(screenPoint.X / scale, screenPoint.Y / scale);
+        var entry = WorkspaceEntryAt(rootPoint);
+        if (entry is not null)
+        {
+            BeginWorkspacePointer(entry);
+            return;
+        }
+        if (BeginNativePanePointer(rootPoint))
+        {
+            return;
+        }
+
+        _workspacePointerDown = false;
+        _inputBridgeTimer.Stop();
+        _workspaceInputBridgeActive = false;
+        _nativePaneInputTarget = null;
+    }
+
+    private bool BeginNativePanePointer(Point rootPoint)
+    {
+        if (SettingsFrame.Visibility == Visibility.Visible
+            || WorkspaceHost.Visibility != Visibility.Visible
+            || _visibleWorkspace is not { } view
+            || !view.IsLoaded)
+        {
+            return false;
+        }
+
+        try
+        {
+            var point = RootGrid.TransformToVisual(view)
+                .TransformPoint(rootPoint);
+            if (!view.ActivatePaneAt(point))
+            {
+                return false;
+            }
+        }
+        catch (InvalidOperationException)
+        {
+            return false;
+        }
+
+        EnsureInputSiteSubclass();
+        _workspacePointerDown = false;
+        _workspaceInputTarget = view;
+        _workspaceInputBridgeActive = true;
+        _nativePaneInputTarget = view.SelectedTerminal;
+        RestartInputBridgeTimer();
+        return true;
+    }
+
+    private WorkspaceEntry? WorkspaceEntryAt(Point rootPoint)
+    {
+        foreach (var entry in _workspaces.Values)
+        {
+            var item = entry.Item;
+            if (!item.IsLoaded
+                || item.Visibility != Visibility.Visible
+                || item.ActualWidth <= 0
+                || item.ActualHeight <= 0)
+            {
+                continue;
+            }
+
+            try
+            {
+                var topLeft = item.TransformToVisual(RootGrid)
+                    .TransformPoint(new Point(0, 0));
+                var bounds = new Rect(
+                    topLeft.X,
+                    topLeft.Y,
+                    item.ActualWidth,
+                    item.ActualHeight);
+                if (bounds.Contains(rootPoint))
+                {
+                    return entry;
+                }
+            }
+            catch (InvalidOperationException)
+            {
+            }
+        }
+        return null;
+    }
+
+    private void BeginWorkspacePointer(WorkspaceEntry entry)
+    {
+        EnsureInputSiteSubclass();
+        _inputBridgeTimer.Stop();
+        _nativePaneInputTarget = null;
+        _workspacePointerDown = true;
+        _workspaceInputTarget = entry.View;
+        _workspaceInputBridgeActive = true;
+        if (!ReferenceEquals(Nav.SelectedItem, entry.Item))
+        {
+            Nav.SelectedItem = entry.Item;
+        }
+        if (!ReferenceEquals(_visibleWorkspace, entry.View))
+        {
+            ShowWorkspace(entry);
+        }
+    }
+
+    private static Windows.UI.Core.CorePhysicalKeyStatus PhysicalKeyStatusOf(IntPtr lParam)
+    {
+        var value = unchecked((ulong)lParam.ToInt64());
+        return new Windows.UI.Core.CorePhysicalKeyStatus
+        {
+            RepeatCount = (uint)(value & 0xFFFF),
+            ScanCode = (uint)((value >> 16) & 0xFF),
+            IsExtendedKey = ((value >> 24) & 1) != 0,
+            IsMenuKeyDown = ((value >> 29) & 1) != 0,
+            WasKeyDown = ((value >> 30) & 1) != 0,
+            IsKeyReleased = ((value >> 31) & 1) != 0,
+        };
+    }
+
+    private static bool KeyCanProduceCharacter(VirtualKey key) =>
+        MapVirtualKey((uint)key, 2) != 0
+        || key is VirtualKey.Enter or VirtualKey.Back or VirtualKey.Tab or VirtualKey.Escape;
+
+    private void OnRootGridLoaded(object sender, RoutedEventArgs args)
+    {
+        EnsureInputSiteSubclass();
+        EnsureMouseHook();
+        DispatcherQueue.TryEnqueue(() =>
+        {
+            EnsureInputSiteSubclass();
+            EnsureMouseHook();
+        });
+    }
+
+    private void EnsureInputSiteSubclass()
+    {
+        if (_closed || _windowHandle == IntPtr.Zero)
+        {
+            return;
+        }
+
+        var candidate = GetFocus();
+        if (!IsInputSiteWindow(candidate)
+            || !IsChild(_windowHandle, candidate))
+        {
+            candidate = FindInputSiteWindow(_windowHandle);
+        }
+        if (candidate == IntPtr.Zero || candidate == _inputSiteHandle)
+        {
+            return;
+        }
+
+        if (!SetWindowSubclass(
+                candidate,
+                _windowSubclassProc,
+                new UIntPtr(WindowSubclassId),
+                UIntPtr.Zero))
+        {
+            Diag.Log($"window input subclass failed: {Marshal.GetLastWin32Error()}");
+            return;
+        }
+
+        var previous = _inputSiteHandle;
+        _inputSiteHandle = candidate;
+        if (previous != IntPtr.Zero)
+        {
+            RemoveWindowSubclass(
+                previous,
+                _windowSubclassProc,
+                new UIntPtr(WindowSubclassId));
+        }
+        Diag.Log("window input subclass installed");
+    }
+
+    private void EnsureMouseHook()
+    {
+        if (_closed
+            || !_windowActivated
+            || _windowHandle == IntPtr.Zero
+            || _mouseHookHandle != IntPtr.Zero)
+        {
+            return;
+        }
+
+        _mouseHookHandle = SetWindowsHookEx(
+            WhMouseLl,
+            _lowLevelMouseProc,
+            GetModuleHandle(null),
+            0);
+        if (_mouseHookHandle == IntPtr.Zero)
+        {
+            Diag.Log($"mouse input hook failed: {Marshal.GetLastWin32Error()}");
+        }
+    }
+
+    private void RemoveMouseHook()
+    {
+        if (_mouseHookHandle == IntPtr.Zero)
+        {
+            return;
+        }
+
+        if (UnhookWindowsHookEx(_mouseHookHandle))
+        {
+            _mouseHookHandle = IntPtr.Zero;
+        }
+        else
+        {
+            Diag.Log($"mouse input unhook failed: {Marshal.GetLastWin32Error()}");
+        }
+    }
+
+    private static IntPtr FindInputSiteWindow(IntPtr parent) =>
+        FindChildWindow(parent, "InputSiteWindowClass");
+
+    private static IntPtr FindChildWindow(IntPtr parent, string expectedClass)
+    {
+        var match = IntPtr.Zero;
+        EnumChildWindowProc callback = (window, _) =>
+        {
+            if (!HasWindowClass(window, expectedClass))
+            {
+                return true;
+            }
+
+            match = window;
+            return false;
+        };
+        EnumChildWindows(parent, callback, IntPtr.Zero);
+        GC.KeepAlive(callback);
+        return match;
+    }
+
+    private static bool IsInputSiteWindow(IntPtr window) =>
+        HasWindowClass(window, "InputSiteWindowClass");
+
+    private static bool HasWindowClass(IntPtr window, string expectedClass)
+    {
+        if (window == IntPtr.Zero)
+        {
+            return false;
+        }
+
+        var className = new StringBuilder(64);
+        return GetClassName(window, className, className.Capacity) > 0
+            && string.Equals(
+                className.ToString(),
+                expectedClass,
+                StringComparison.Ordinal);
+    }
+
     private void OnWindowActivated(object sender, WindowActivatedEventArgs e)
     {
         if (e.WindowActivationState == WindowActivationState.Deactivated)
         {
+            _windowActivated = false;
+            RemoveMouseHook();
             return;
         }
         _windowActivated = true;
+        EnsureInputSiteSubclass();
+        EnsureMouseHook();
+        DispatcherQueue.TryEnqueue(() =>
+        {
+            EnsureInputSiteSubclass();
+            EnsureMouseHook();
+        });
         FocusSelectedTerminal("window-activated");
     }
 
     private void FocusSelectedTerminal(string reason)
     {
-        if (_windowActivated && WorkspaceHost.Content is WorkspaceView view)
+        if (_windowActivated
+            && SettingsFrame.Visibility != Visibility.Visible
+            && _visibleWorkspace is { } view)
         {
             view.FocusSelectedTerminal(reason);
+        }
+    }
+
+    private void RestartInputBridgeTimer()
+    {
+        _inputBridgeDeadline = Environment.TickCount64
+            + (long)_inputBridgeTimer.Interval.TotalMilliseconds;
+        _inputBridgeTimer.Stop();
+        _inputBridgeTimer.Start();
+    }
+
+    private void OnInputBridgeTimerTick(object? sender, object args)
+    {
+        if (_workspaceInputBridgeActive
+            && Environment.TickCount64 < _inputBridgeDeadline)
+        {
+            return;
+        }
+
+        _inputBridgeTimer.Stop();
+        _nativePaneInputTarget = null;
+        if (!_closed
+            && !_workspacePointerDown
+            && _workspaceInputTarget is { } target
+            && ReferenceEquals(_visibleWorkspace, target))
+        {
+            _workspaceInputBridgeActive = false;
         }
     }
 
@@ -249,7 +705,25 @@ public sealed partial class MainWindow : Window
     {
         var view = new WorkspaceView(_mux, workspace);
         view.Render(snapshot);
-        view.Loaded += (_, _) => FocusSelectedTerminal("workspace-loaded");
+        view.SetHostActive(false);
+        view.Loaded += (_, _) =>
+        {
+            if (ReferenceEquals(_visibleWorkspace, view))
+            {
+                FocusSelectedTerminal("workspace-loaded");
+            }
+        };
+        view.SelectedTerminalFocused += () =>
+        {
+            if (_workspaceInputBridgeActive
+                && !_workspacePointerDown
+                && ReferenceEquals(_visibleWorkspace, view)
+                && ReferenceEquals(_workspaceInputTarget, view))
+            {
+                RestartInputBridgeTimer();
+            }
+        };
+        _workspaceViewsHost.Children.Add(view);
 
         var item = BuildSessionItem(workspace, snapshot);
         var entry = new WorkspaceEntry
@@ -438,6 +912,17 @@ public sealed partial class MainWindow : Window
                      .Where(entry => !liveIds.Contains(entry.Workspace.PublicId))
                      .ToList())
         {
+            if (ReferenceEquals(_visibleWorkspace, stale.View))
+            {
+                _visibleWorkspace = null;
+            }
+            if (ReferenceEquals(_workspaceInputTarget, stale.View))
+            {
+                _workspaceInputTarget = null;
+                _workspaceInputBridgeActive = false;
+                _nativePaneInputTarget = null;
+            }
+            _workspaceViewsHost.Children.Remove(stale.View);
             stale.View.Dispose();
             _workspaces.Remove(stale.Workspace.PublicId);
             Nav.MenuItems.Remove(stale.Item);
@@ -467,7 +952,13 @@ public sealed partial class MainWindow : Window
 
         if (latest.Count == 0)
         {
-            WorkspaceHost.Content = null;
+            _inputBridgeTimer.Stop();
+            _visibleWorkspace = null;
+            _workspaceInputTarget = null;
+            _workspaceInputBridgeActive = false;
+            _nativePaneInputTarget = null;
+            _workspacePointerDown = false;
+            _workspaceViewsHost.Children.Clear();
             Close();
             return;
         }
@@ -491,7 +982,7 @@ public sealed partial class MainWindow : Window
             }
             Nav.SelectedItem = selected;
             if (selected?.Tag is WorkspaceEntry entry
-                && !ReferenceEquals(WorkspaceHost.Content, entry.View))
+                && !ReferenceEquals(_visibleWorkspace, entry.View))
             {
                 ShowWorkspace(entry);
             }
@@ -508,7 +999,19 @@ public sealed partial class MainWindow : Window
             return;
         }
 
-        var wasVisible = ReferenceEquals(WorkspaceHost.Content, entry.View);
+        var wasVisible = ReferenceEquals(_visibleWorkspace, entry.View);
+        if (wasVisible)
+        {
+            _visibleWorkspace = null;
+        }
+        if (ReferenceEquals(_workspaceInputTarget, entry.View))
+        {
+            _inputBridgeTimer.Stop();
+            _workspaceInputTarget = null;
+            _workspaceInputBridgeActive = false;
+            _nativePaneInputTarget = null;
+        }
+        _workspaceViewsHost.Children.Remove(entry.View);
         entry.View.Dispose();
         _workspaces.Remove(entry.Workspace.PublicId);
         Nav.MenuItems.Remove(entry.Item);
@@ -534,15 +1037,22 @@ public sealed partial class MainWindow : Window
     {
         if (args.IsSettingsSelected)
         {
+            _inputBridgeTimer.Stop();
+            _workspaceInputTarget = null;
+            _workspaceInputBridgeActive = false;
+            _nativePaneInputTarget = null;
+            _workspacePointerDown = false;
             SettingsFrame.Navigate(typeof(Views.SettingsPage));
             SettingsFrame.Visibility = Visibility.Visible;
             WorkspaceHost.Visibility = Visibility.Collapsed;
+            WorkspaceHost.IsHitTestVisible = false;
             CloseWorkspaceButton.IsEnabled = false;
             return;
         }
 
         SettingsFrame.Visibility = Visibility.Collapsed;
         WorkspaceHost.Visibility = Visibility.Visible;
+        WorkspaceHost.IsHitTestVisible = true;
         CloseWorkspaceButton.IsEnabled = true;
         if (args.SelectedItem is NavigationViewItem { Tag: WorkspaceEntry entry })
         {
@@ -550,12 +1060,108 @@ public sealed partial class MainWindow : Window
         }
     }
 
+    private static WorkspaceEntry? WorkspaceEntryFrom(DependencyObject? source)
+    {
+        while (source is not null && source is not NavigationViewItem)
+        {
+            source = VisualTreeHelper.GetParent(source);
+        }
+        return (source as NavigationViewItem)?.Tag as WorkspaceEntry;
+    }
+
+    private static TerminalView? TerminalViewFrom(DependencyObject? source)
+    {
+        while (source is not null && source is not TerminalView)
+        {
+            source = VisualTreeHelper.GetParent(source);
+        }
+        return source as TerminalView;
+    }
+
+    private WorkspaceView? WorkspaceInputTargetFor(DependencyObject? source)
+    {
+        if (!_workspaceInputBridgeActive
+            || _workspaceInputTarget is not { } target
+            || !ReferenceEquals(_visibleWorkspace, target))
+        {
+            return null;
+        }
+
+        var entry = WorkspaceEntryFrom(source);
+        if (entry is not null
+            && ReferenceEquals(Nav.SelectedItem, entry.Item)
+            && ReferenceEquals(target, entry.View))
+        {
+            return target;
+        }
+
+        var sourceTerminal = TerminalViewFrom(source);
+        return sourceTerminal is not null && !target.IsSelectedTerminal(sourceTerminal)
+            ? target
+            : null;
+    }
+
+    private void OnInputPreviewKeyDown(object sender, KeyRoutedEventArgs args) =>
+        WorkspaceInputTargetFor(args.OriginalSource as DependencyObject)?.ForwardKeyDown(args);
+
+    private void OnInputKeyUp(object sender, KeyRoutedEventArgs args) =>
+        WorkspaceInputTargetFor(args.OriginalSource as DependencyObject)?.ForwardKeyUp(args);
+
+    private void OnInputCharacterReceived(
+        UIElement sender,
+        CharacterReceivedRoutedEventArgs args) =>
+        WorkspaceInputTargetFor(args.OriginalSource as DependencyObject)?.ForwardCharacterReceived(args);
+
+    private void OnNavPointerPressed(object sender, PointerRoutedEventArgs args)
+    {
+        var entry = WorkspaceEntryFrom(args.OriginalSource as DependencyObject);
+        if (entry is null
+            || !args.GetCurrentPoint(Nav).Properties.IsLeftButtonPressed)
+        {
+            return;
+        }
+
+        BeginWorkspacePointer(entry);
+    }
+
+    private void OnNavPointerReleased(object sender, PointerRoutedEventArgs args)
+    {
+        _workspacePointerDown = false;
+        EnsureInputSiteSubclass();
+        var entry = WorkspaceEntryFrom(args.OriginalSource as DependencyObject);
+        if (entry is null || !ReferenceEquals(Nav.SelectedItem, entry.Item))
+        {
+            return;
+        }
+
+        _nativePaneInputTarget = null;
+        _workspaceInputTarget = entry.View;
+        _workspaceInputBridgeActive = true;
+        FocusSelectedTerminal("workspace-pointer-released");
+        DispatcherQueue.TryEnqueue(() =>
+        {
+            if (!_closed
+                && ReferenceEquals(Nav.SelectedItem, entry.Item)
+                && ReferenceEquals(_visibleWorkspace, entry.View))
+            {
+                FocusSelectedTerminal("workspace-pointer-settled");
+            }
+        });
+    }
+
     private void ShowWorkspace(WorkspaceEntry entry)
     {
+        _nativePaneInputTarget = null;
         if (!_mux.SelectWorkspace(entry.Workspace.PublicId))
         {
             Diag.Log($"workspace selection failed: {entry.Workspace.PublicId}");
             return;
+        }
+        var switchingWorkspace = !ReferenceEquals(_visibleWorkspace, entry.View);
+        _workspaceInputTarget = entry.View;
+        if (switchingWorkspace)
+        {
+            _workspaceInputBridgeActive = true;
         }
         try
         {
@@ -565,7 +1171,12 @@ public sealed partial class MainWindow : Window
         {
             Diag.Log($"workspace render failed: {ex.Message}");
         }
-        WorkspaceHost.Content = entry.View;
+        if (!ReferenceEquals(_visibleWorkspace, entry.View))
+        {
+            _visibleWorkspace?.SetHostActive(false);
+            _visibleWorkspace = entry.View;
+            entry.View.SetHostActive(true);
+        }
         FocusSelectedTerminal("workspace-selected");
     }
 
@@ -583,11 +1194,12 @@ public sealed partial class MainWindow : Window
             var changed = snapshot.Cursor.Generation != _snapshotGeneration
                 || snapshot.Cursor.Revision != _snapshotRevision;
             SyncWorkspaceNavigation(latest, snapshot, followActive: changed);
-            if (WorkspaceHost.Content is WorkspaceView view)
+            if (_visibleWorkspace is { } view)
             {
                 if (changed)
                 {
                     view.Render(snapshot);
+                    FocusSelectedTerminal("topology-rendered");
                 }
                 else
                 {
@@ -629,7 +1241,20 @@ public sealed partial class MainWindow : Window
         AppSettings.Changed -= Relocalize;
         Activated -= OnWindowActivated;
         Closed -= OnWindowClosed;
+        RootGrid.Loaded -= OnRootGridLoaded;
+        if (_inputSiteHandle != IntPtr.Zero)
+        {
+            RemoveWindowSubclass(
+                _inputSiteHandle,
+                _windowSubclassProc,
+                new UIntPtr(WindowSubclassId));
+            _inputSiteHandle = IntPtr.Zero;
+        }
+        RemoveMouseHook();
+        _windowHandle = IntPtr.Zero;
         NavSearch.TextChanged -= OnNavSearchChanged;
+        _inputBridgeTimer.Stop();
+        _inputBridgeTimer.Tick -= OnInputBridgeTimerTick;
         _topologyTimer.Stop();
         _topologyTimer.Tick -= OnTopologyTick;
 
@@ -637,8 +1262,87 @@ public sealed partial class MainWindow : Window
         {
             entry.View.Dispose();
         }
+        _visibleWorkspace = null;
+        _workspaceInputTarget = null;
+        _workspaceInputBridgeActive = false;
+        _nativePaneInputTarget = null;
+        _workspacePointerDown = false;
+        _workspaceViewsHost.Children.Clear();
         _workspaces.Clear();
         AppSettings.Current.Save();
         _mux.Dispose();
     }
+
+    [DllImport("comctl32.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool SetWindowSubclass(
+        IntPtr window,
+        WindowSubclassProc callback,
+        UIntPtr subclassId,
+        UIntPtr referenceData);
+
+    [DllImport("comctl32.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool RemoveWindowSubclass(
+        IntPtr window,
+        WindowSubclassProc callback,
+        UIntPtr subclassId);
+
+    [DllImport("comctl32.dll")]
+    private static extern IntPtr DefSubclassProc(
+        IntPtr window,
+        uint message,
+        IntPtr wParam,
+        IntPtr lParam);
+
+    [DllImport("user32.dll", SetLastError = true)]
+    private static extern IntPtr SetWindowsHookEx(
+        int hookId,
+        LowLevelMouseProc callback,
+        IntPtr module,
+        uint threadId);
+
+    [DllImport("user32.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool UnhookWindowsHookEx(IntPtr hook);
+
+    [DllImport("user32.dll")]
+    private static extern IntPtr CallNextHookEx(
+        IntPtr hook,
+        int code,
+        IntPtr wParam,
+        IntPtr lParam);
+
+    [DllImport("user32.dll")]
+    private static extern IntPtr GetForegroundWindow();
+
+    [DllImport("kernel32.dll", CharSet = CharSet.Unicode)]
+    private static extern IntPtr GetModuleHandle(string? moduleName);
+
+    [DllImport("user32.dll")]
+    private static extern uint MapVirtualKey(uint code, uint mapType);
+
+    [DllImport("user32.dll")]
+    private static extern IntPtr GetFocus();
+
+    [DllImport("user32.dll")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool IsChild(IntPtr parent, IntPtr window);
+
+    [DllImport("user32.dll")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool EnumChildWindows(
+        IntPtr parent,
+        EnumChildWindowProc callback,
+        IntPtr lParam);
+
+    [DllImport("user32.dll", CharSet = CharSet.Unicode)]
+    private static extern int GetClassName(
+        IntPtr window,
+        StringBuilder className,
+        int maxCount);
+
+    [DllImport("user32.dll")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool ScreenToClient(IntPtr window, ref NativePoint point);
 }

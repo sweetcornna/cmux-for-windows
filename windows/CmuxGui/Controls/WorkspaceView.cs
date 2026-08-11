@@ -8,6 +8,7 @@ using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Controls.Primitives;
 using Microsoft.UI.Xaml.Input;
 using Microsoft.UI.Xaml.Media;
+using Windows.Foundation;
 using Windows.System;
 
 namespace CmuxGui.Controls;
@@ -23,6 +24,7 @@ internal sealed class WorkspaceView : UserControl, IDisposable
     private readonly HashSet<string> _renderedBrowsers = [];
     private bool _rendering;
     private bool _disposed;
+    private bool _hostActive;
     private string? _activePaneId;
     private TerminalView? _selectedTerminal;
     private MuxSnapshot? _snapshot;
@@ -76,6 +78,71 @@ internal sealed class WorkspaceView : UserControl, IDisposable
     }
 
     public MuxRuntime.WorkspaceInfo Workspace { get; }
+
+    public event Action? SelectedTerminalFocused;
+
+    public bool IsSelectedTerminal(TerminalView terminal) =>
+        ReferenceEquals(_selectedTerminal, terminal);
+
+    internal TerminalView? SelectedTerminal => _selectedTerminal;
+
+    internal bool ActivatePaneAt(Point point)
+    {
+        if (!_hostActive || !IsLoaded)
+        {
+            return false;
+        }
+
+        foreach (var (paneId, border) in _paneBorders)
+        {
+            if (!border.IsLoaded
+                || border.Visibility != Visibility.Visible
+                || border.ActualWidth <= 0
+                || border.ActualHeight <= 0)
+            {
+                continue;
+            }
+
+            try
+            {
+                var topLeft = border.TransformToVisual(this)
+                    .TransformPoint(new Point(0, 0));
+                var bounds = new Rect(
+                    topLeft.X,
+                    topLeft.Y,
+                    border.ActualWidth,
+                    border.ActualHeight);
+                if (bounds.Contains(point)
+                    && border.Child is TabView tabView)
+                {
+                    return ActivatePane(paneId, tabView);
+                }
+            }
+            catch (InvalidOperationException)
+            {
+            }
+        }
+        return false;
+    }
+
+    public void SetHostActive(bool active)
+    {
+        if (_disposed)
+        {
+            return;
+        }
+
+        Visibility = active ? Visibility.Visible : Visibility.Collapsed;
+        if (_hostActive == active)
+        {
+            return;
+        }
+        _hostActive = active;
+        foreach (var terminal in _terminals.Values)
+        {
+            terminal.SetHostActive(active);
+        }
+    }
 
     public void Render(MuxSnapshot snapshot)
     {
@@ -170,9 +237,34 @@ internal sealed class WorkspaceView : UserControl, IDisposable
 
         return JsonSerializer.Serialize(new
         {
-            Screens = screens,
-            Panes = panes,
-            Tabs = tabs,
+            Screens = screens.Select(screen => new
+            {
+                screen.Id,
+                screen.WorkspaceId,
+                screen.Name,
+                screen.Index,
+                screen.Focused,
+                Layout = new
+                {
+                    screen.Layout.ZoomedPaneId,
+                    screen.Layout.Root,
+                },
+            }),
+            Panes = panes.Select(pane => new
+            {
+                pane.Id,
+                pane.ScreenId,
+                pane.Name,
+            }),
+            Tabs = tabs.Select(tab => new
+            {
+                tab.Id,
+                tab.PaneId,
+                tab.Name,
+                tab.Index,
+                tab.ContentKind,
+                tab.ContentId,
+            }),
             Terminals = snapshot.Terminals
                 .Where(terminal => contentIds.Contains(terminal.Id))
                 .Select(terminal => terminal.Id)
@@ -184,12 +276,92 @@ internal sealed class WorkspaceView : UserControl, IDisposable
         });
     }
 
-    public void FocusSelectedTerminal(string reason) =>
-        _selectedTerminal?.FocusTerminal(reason);
+    public bool ForwardKeyDown(
+        VirtualKey key,
+        Windows.UI.Core.CorePhysicalKeyStatus status) =>
+        _hostActive
+        && IsLoaded
+        && _selectedTerminal?.ForwardKeyDown(key, status) == true;
+
+    public bool ForwardKeyUp(
+        VirtualKey key,
+        Windows.UI.Core.CorePhysicalKeyStatus status) =>
+        _hostActive
+        && IsLoaded
+        && _selectedTerminal?.ForwardKeyUp(key, status) == true;
+
+    public bool ForwardCharacterReceived(uint keyCode) =>
+        _hostActive
+        && IsLoaded
+        && _selectedTerminal?.ForwardCharacterReceived(keyCode) == true;
+
+    public void ForwardKeyDown(KeyRoutedEventArgs args)
+    {
+        if (_hostActive && IsLoaded)
+        {
+            _selectedTerminal?.ForwardKeyDown(args);
+        }
+    }
+
+    public void ForwardKeyUp(KeyRoutedEventArgs args)
+    {
+        if (_hostActive && IsLoaded)
+        {
+            _selectedTerminal?.ForwardKeyUp(args);
+        }
+    }
+
+    public void ForwardCharacterReceived(CharacterReceivedRoutedEventArgs args)
+    {
+        if (_hostActive && IsLoaded)
+        {
+            _selectedTerminal?.ForwardCharacterReceived(args);
+        }
+    }
+
+    public void FocusSelectedTerminal(string reason)
+    {
+        var terminal = _selectedTerminal;
+        if (_disposed || !IsLoaded || terminal is null)
+        {
+            return;
+        }
+
+        terminal.FocusTerminal(reason);
+        DispatcherQueue.TryEnqueue(() =>
+        {
+            if (!_disposed && IsLoaded && ReferenceEquals(_selectedTerminal, terminal))
+            {
+                terminal.FocusTerminal($"{reason}-settled");
+            }
+        });
+    }
 
     public void UpdateStatus(MuxSnapshot snapshot)
     {
         _snapshot = snapshot;
+        var screen = snapshot.Screens
+            .Where(screen => screen.WorkspaceId == Workspace.PublicId)
+            .OrderBy(screen => screen.Index)
+            .FirstOrDefault(screen => screen.Focused)
+            ?? snapshot.Screens
+                .Where(screen => screen.WorkspaceId == Workspace.PublicId)
+                .OrderBy(screen => screen.Index)
+                .FirstOrDefault();
+        _activePaneId = screen?.Layout.ActivePaneId;
+        var activeTab = _activePaneId is null
+            ? null
+            : snapshot.Tabs
+                .Where(tab => tab.PaneId == _activePaneId)
+                .OrderByDescending(tab => tab.Focused)
+                .ThenBy(tab => tab.Index)
+                .FirstOrDefault();
+        _selectedTerminal = activeTab is not null
+            && _tabItems.TryGetValue(activeTab.Id, out var activeItem)
+                ? activeItem.Content as TerminalView
+                : null;
+        UpdatePaneFocus();
+
         var terminals = snapshot.Terminals
             .ToDictionary(terminal => terminal.Id, StringComparer.Ordinal);
         var browsers = snapshot.Browsers
@@ -624,8 +796,16 @@ internal sealed class WorkspaceView : UserControl, IDisposable
                 if (!_terminals.TryGetValue(tab.Id, out var terminal))
                 {
                     terminal = new TerminalView(_mux, tab.Id);
+                    terminal.GotFocus += (_, _) =>
+                    {
+                        if (_hostActive && ReferenceEquals(_selectedTerminal, terminal))
+                        {
+                            SelectedTerminalFocused?.Invoke();
+                        }
+                    };
                     _terminals[tab.Id] = terminal;
                 }
+                terminal.SetHostActive(_hostActive);
                 item.Content = terminal;
             }
             else if (browsers.TryGetValue(tab.ContentId, out var browserSnapshot))
@@ -660,6 +840,7 @@ internal sealed class WorkspaceView : UserControl, IDisposable
         }
         selected ??= tabView.TabItems.OfType<TabViewItem>().First();
         tabView.SelectedItem = selected;
+        var selectedTabId = selected.Tag as string;
         if (paneId == _activePaneId && selected.Content is TerminalView selectedTerminal)
         {
             _selectedTerminal = selectedTerminal;
@@ -675,7 +856,9 @@ internal sealed class WorkspaceView : UserControl, IDisposable
         };
         tabView.SelectionChanged += (_, _) =>
         {
-            if (_rendering || tabView.SelectedItem is not TabViewItem { Tag: string tabId } item)
+            if (_rendering
+                || tabView.SelectedItem is not TabViewItem { Tag: string tabId } item
+                || tabId == selectedTabId)
             {
                 return;
             }
@@ -684,11 +867,12 @@ internal sealed class WorkspaceView : UserControl, IDisposable
                 Diag.Log($"tab selection failed: {tabId}");
                 return;
             }
+            selectedTabId = tabId;
             _mux.FocusPane(paneId);
             _activePaneId = paneId;
             UpdatePaneFocus();
             _selectedTerminal = item.Content as TerminalView;
-            _selectedTerminal?.FocusTerminal("pane-tab-selected");
+            FocusSelectedTerminal("pane-tab-selected");
         };
 
         var border = new Border
@@ -699,17 +883,25 @@ internal sealed class WorkspaceView : UserControl, IDisposable
             CornerRadius = new CornerRadius(8),
             Margin = new Thickness(2),
         };
-        border.PointerPressed += (_, _) =>
-        {
-            if (_mux.FocusPane(paneId))
-            {
-                _activePaneId = paneId;
-                UpdatePaneFocus();
-                _selectedTerminal = (tabView.SelectedItem as TabViewItem)?.Content as TerminalView;
-            }
-        };
+        border.AddHandler(
+            UIElement.PointerPressedEvent,
+            new PointerEventHandler((_, _) => ActivatePane(paneId, tabView)),
+            true);
         _paneBorders[paneId] = border;
         return border;
+    }
+
+    private bool ActivatePane(string paneId, TabView tabView)
+    {
+        if (!_mux.FocusPane(paneId))
+        {
+            return false;
+        }
+
+        _activePaneId = paneId;
+        UpdatePaneFocus();
+        _selectedTerminal = (tabView.SelectedItem as TabViewItem)?.Content as TerminalView;
+        return true;
     }
 
     private MenuFlyout BuildNewTabMenu(string paneId)

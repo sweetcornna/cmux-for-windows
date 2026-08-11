@@ -70,8 +70,8 @@
                     HorizontalContentAlignment="Stretch"
                     VerticalContentAlignment="Stretch" />
 
-                <!-- Settings overlays the workspace rather than replacing it,
-                     so every terminal process keeps running while it is open. -->
+                <!-- Settings keeps the workspace mounted but hides its surface,
+                     so terminal processes continue without showing through. -->
                 <Frame x:Name="SettingsFrame" Visibility="Collapsed" />
             </Grid>
         </NavigationView>

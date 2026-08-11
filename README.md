@@ -13,10 +13,10 @@ A native Windows terminal workspace built with WinUI 3, ConPTY, Rust, and Ghostt
 - Real Windows pseudoterminals through ConPTY.
 - Workspaces, screens, draggable split panes, and terminal and WebView2 browser tabs.
 - Native keyboard, mouse, selection, clipboard, pane-focus, and pane-zoom interactions with uniformly sized compact action buttons and neutral pane borders.
-- Stable live terminal and browser controls during topology polling and split-layout changes, with selected terminal canvases attached only after their hosts load so new tabs render immediately and reparented output does not stretch.
+- Stable live terminal and browser controls during pane and workspace switches, topology polling, and split-layout changes, with inactive terminal rendering paused and selected terminals ready for input without a visual-tree reload gap.
 - Durable workspace topology across app restarts; restored terminals start fresh shells.
 - Ghostty-compatible colors, fonts, palettes, bundled themes, and custom themes applied consistently to existing and newly created terminals, plus a live custom accent for shell actions and settings controls.
-- A responsive settings page with reserved action columns that keep controls within the visible width when the window is resized or maximized.
+- A responsive settings page that keeps controls within the visible width and hides the mounted terminal surface while settings are open.
 - English and Simplified Chinese interface strings.
 - Optional Explorer integration in the Windows 11 first-level context menu, with a classic-menu fallback on Windows 10.
 - A standalone `cmux-tui.exe` and local resource CLI for terminal automation.

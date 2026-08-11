@@ -6,6 +6,14 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ## [Unreleased]
 
+## [0.3.3] - 2026-08-11
+
+### Fixed
+
+- Kept workspace views mounted across navigation and restored terminal polling after internal reparenting so Explorer launches, workspace and terminal-tab switches, and topology refreshes accept input without a reload gap or extra click.
+- Hid the mounted workspace surface while Settings is open so terminal output does not show through the transparent settings page.
+- Preselected split panes from the foreground left-button signal, observed handled terminal-body pointer presses at the pane boundary, and kept pane-focus-only snapshot changes out of topology reconstruction so immediate input reaches the clicked pane without a delayed tab rebuild reclaiming focus.
+
 ## [0.3.2] - 2026-08-10
 
 ### Fixed
