@@ -6,6 +6,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ## [Unreleased]
 
+## [0.3.5] - 2026-08-12
+
 ### Added
 
 - Added a centralized Windows shortcut catalog covering workspace, screen, pane, tab, browser, and terminal actions, including position selection for the first ten workspaces, screens, and tabs.
