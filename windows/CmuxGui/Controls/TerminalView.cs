@@ -159,6 +159,7 @@ public sealed partial class TerminalView : UserControl, IDisposable
         Diag.Log("TerminalView ctor");
         Loaded += OnLoaded;
         Unloaded += OnUnloaded;
+        InitializeTextInput();
         // Deliberately NOT disposing on Unloaded: TabView unloads and reloads
         // its content during setup and on every tab switch, so tearing the
         // session down there kills the terminal before it ever draws. The
@@ -169,10 +170,12 @@ public sealed partial class TerminalView : UserControl, IDisposable
         // Focus moving away silently is one of the few remaining explanations
         // for keystrokes that never arrive, so make it visible. LosingFocus
         // names the element taking over, which LostFocus cannot.
+        GotFocus += OnTextInputGotFocus;
         GotFocus += (_, _) => Diag.Log("terminal got focus");
         LosingFocus += (_, e) => Diag.Log(
             $"terminal losing focus to {e.NewFocusedElement?.GetType().FullName ?? "nothing"} "
             + $"(state={e.FocusState}, direction={e.Direction}, cancelable={e.Cancel})");
+        LostFocus += OnTextInputLostFocus;
         LostFocus += (_, _) =>
         {
             ResetStructuredKeyState();
@@ -194,12 +197,14 @@ public sealed partial class TerminalView : UserControl, IDisposable
         _hostActive = active;
         if (!active)
         {
+            LeaveTextInputFocus();
             ResetStructuredKeyState();
             _timer.Stop();
             return;
         }
         if (IsLoaded)
         {
+            EnterTextInputFocus();
             _timer.Start();
             RequestPostArrangeRefresh();
         }
@@ -895,7 +900,10 @@ public sealed partial class TerminalView : UserControl, IDisposable
             _suppressStructuredCharacter = false;
             return true;
         }
-        // Printable input, including anything produced by an IME.
+        if (_textInputContext is not null && _textInputHasFocus)
+        {
+            return false;
+        }
         Send(Encoding.UTF8.GetBytes(text));
         return true;
     }
@@ -1312,6 +1320,9 @@ public sealed partial class TerminalView : UserControl, IDisposable
         AppSettings.Changed -= OnSettingsChanged;
         Loaded -= OnLoaded;
         Unloaded -= OnUnloaded;
+        GotFocus -= OnTextInputGotFocus;
+        LostFocus -= OnTextInputLostFocus;
+        DisposeTextInput();
         LayoutUpdated -= OnPostArrangeLayoutUpdated;
         _postArrangeRefreshPending = false;
         _canvas.SizeChanged -= OnCanvasSizeChanged;

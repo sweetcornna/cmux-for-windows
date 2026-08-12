@@ -6,6 +6,11 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ## [Unreleased]
 
+### Fixed
+
+- Added terminal `Ctrl+V` paste alongside the existing paste shortcuts.
+- Routed committed Windows input-method text through the native text services so Chinese and other non-English input methods work in terminal panes.
+
 ## [0.3.5] - 2026-08-12
 
 ### Added

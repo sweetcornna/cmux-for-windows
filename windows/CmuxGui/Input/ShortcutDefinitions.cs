@@ -155,6 +155,7 @@ internal static class ShortcutDefinitions
 
         D('C', C | S, T, ShortcutAction.TerminalCopy, V, false, "Ctrl+Shift+C"),
         D(KeyInsert, C, T, ShortcutAction.TerminalCopy, V, false, "Ctrl+Insert"),
+        D('V', C, T, ShortcutAction.TerminalPaste, V, false, "Ctrl+V"),
         D('V', C | S, T, ShortcutAction.TerminalPaste, V, false, "Ctrl+Shift+V"),
         D(KeyInsert, S, T, ShortcutAction.TerminalPaste, V, false, "Shift+Insert"),
         D('A', C | S, T, ShortcutAction.TerminalSelectAll, V, false, "Ctrl+Shift+A"),

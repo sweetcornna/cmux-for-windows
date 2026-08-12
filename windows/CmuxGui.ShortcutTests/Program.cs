@@ -71,6 +71,7 @@ var expected = new (int Key, ShortcutModifiers Modifiers, ShortcutContexts Conte
     ('L', c, b, ShortcutAction.BrowserFocusAddress),
     ('C', c | s, w, ShortcutAction.TerminalCopy),
     (0x2D, c, w, ShortcutAction.TerminalCopy),
+    ('V', c, w, ShortcutAction.TerminalPaste),
     ('V', c | s, w, ShortcutAction.TerminalPaste),
     (0x2D, s, w, ShortcutAction.TerminalPaste),
     ('A', c | s, w, ShortcutAction.TerminalSelectAll),

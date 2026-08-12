@@ -67,10 +67,10 @@ Only 64-bit Windows builds using Rust's `x86_64-pc-windows-gnu` target are suppo
 | Browser | `Alt+Left` / `Alt+Right` | Go back / forward |
 | Browser | `Ctrl+R` or `F5` / `Ctrl+L` | Reload / focus the address bar |
 | Terminal | `Ctrl+Shift+C` or `Ctrl+Insert` | Copy the selection |
-| Terminal | `Ctrl+Shift+V` or `Shift+Insert` | Paste |
+| Terminal | `Ctrl+V`, `Ctrl+Shift+V`, or `Shift+Insert` | Paste |
 | Terminal | `Ctrl+Shift+A` | Select all |
 
-Terminal applications continue to receive `Ctrl`, `Alt`, `Shift`, Windows/Super, function, navigation, numpad, system, international, and punctuation keys that do not exactly match an application shortcut. Right Alt/AltGr remains available for layout text input. Application shortcuts work from terminal and WebView content, while text fields, Settings, and modal dialogs retain their own input.
+Terminal applications continue to receive `Ctrl`, `Alt`, `Shift`, Windows/Super, function, navigation, numpad, system, international, and punctuation keys that do not exactly match an application shortcut. Right Alt/AltGr and Windows input methods remain available for Unicode text input. Application shortcuts work from terminal and WebView content, while text fields, Settings, and modal dialogs retain their own input.
 
 ## Install
 
