@@ -6,6 +6,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ## [Unreleased]
 
+## [0.3.4] - 2026-08-11
+
 ### Changed
 
 - Replaced run-shaped terminal text with native DirectWrite/Direct2D per-grapheme grid rendering, preserving Ghostty's one- and two-cell placement across fallback fonts, CJK, emoji, box drawing, bold, and italic text.
