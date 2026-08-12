@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Text.Json;
+using CmuxGui.Input;
 using CmuxGui.Services;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
@@ -25,6 +26,7 @@ internal sealed class WorkspaceView : UserControl, IDisposable
     private bool _rendering;
     private bool _disposed;
     private bool _hostActive;
+    private bool _dialogOpen;
     private string? _activePaneId;
     private TerminalView? _selectedTerminal;
     private MuxSnapshot? _snapshot;
@@ -36,55 +38,324 @@ internal sealed class WorkspaceView : UserControl, IDisposable
         Workspace = workspace;
         HorizontalContentAlignment = HorizontalAlignment.Stretch;
         VerticalContentAlignment = VerticalAlignment.Stretch;
-        AddAccelerator(VirtualKey.Left, "left");
-        AddAccelerator(VirtualKey.Right, "right");
-        AddAccelerator(VirtualKey.Up, "up");
-        AddAccelerator(VirtualKey.Down, "down");
-
-        var zoom = new KeyboardAccelerator
-        {
-            Key = VirtualKey.Enter,
-            Modifiers = VirtualKeyModifiers.Control | VirtualKeyModifiers.Shift,
-        };
-        zoom.Invoked += (_, args) =>
-        {
-            if (_activePaneId is not null)
-            {
-                Mutate(() => _mux.ZoomPane(_activePaneId), $"zoom pane {_activePaneId}");
-                args.Handled = true;
-            }
-        };
-        KeyboardAccelerators.Add(zoom);
-    }
-
-    private void AddAccelerator(VirtualKey key, string direction)
-    {
-        var accelerator = new KeyboardAccelerator
-        {
-            Key = key,
-            Modifiers = VirtualKeyModifiers.Control | VirtualKeyModifiers.Menu,
-        };
-        accelerator.Invoked += (_, args) =>
-        {
-            if (_activePaneId is not null)
-            {
-                Mutate(
-                    () => _mux.FocusPaneDirection(_activePaneId, direction),
-                    $"focus {direction} from {_activePaneId}");
-                args.Handled = true;
-            }
-        };
-        KeyboardAccelerators.Add(accelerator);
     }
 
     public MuxRuntime.WorkspaceInfo Workspace { get; }
 
     public event Action? SelectedTerminalFocused;
 
+    public event Action<ShortcutMatch>? MainWindowShortcutRequested;
+
     public bool IsSelectedTerminal(TerminalView terminal) =>
         ReferenceEquals(_selectedTerminal, terminal);
 
     internal TerminalView? SelectedTerminal => _selectedTerminal;
+
+    internal ShortcutContexts ShortcutContext =>
+        SelectedBrowser is null ? ShortcutContexts.Terminal : ShortcutContexts.Browser;
+
+    internal bool AcceptsApplicationInput => _hostActive && !_dialogOpen;
+
+    private BrowserView? SelectedBrowser =>
+        _snapshot?.Tabs.FirstOrDefault(tab => tab.PaneId == _activePaneId && tab.Focused) is { } tab
+            && _browsers.TryGetValue(tab.Id, out var browser)
+                ? browser
+                : null;
+
+    internal bool HandleShortcut(ShortcutMatch match, bool repeat)
+    {
+        if (!_hostActive || match.Owner != ShortcutOwner.Workspace)
+        {
+            return false;
+        }
+        if (repeat)
+        {
+            return CanExecuteShortcut(match);
+        }
+        return ExecuteShortcut(match);
+    }
+
+    private bool CanExecuteShortcut(ShortcutMatch match)
+    {
+        if (_snapshot is null)
+        {
+            return false;
+        }
+        return match.Action switch
+        {
+            ShortcutAction.NewScreen or ShortcutAction.NewTerminalTab => true,
+            ShortcutAction.PreviousScreen or ShortcutAction.NextScreen => OrderedScreens().Count > 0,
+            ShortcutAction.SelectScreen => OrderedScreens().Count > match.Index,
+            ShortcutAction.RenameScreen or ShortcutAction.CloseScreen =>
+                SelectedScreenSnapshot() is not null,
+            ShortcutAction.SelectTab => ActivePaneTabs().Count > match.Index,
+            ShortcutAction.MoveTabToPane => OrderedPanes().Count > match.Index
+                && ActiveTabSnapshot() is { } activeTab
+                && OrderedPanes()[match.Index].Id != activeTab.PaneId,
+            ShortcutAction.BrowserBack or ShortcutAction.BrowserForward
+                or ShortcutAction.BrowserReload or ShortcutAction.BrowserFocusAddress =>
+                    SelectedBrowser is not null,
+            ShortcutAction.TerminalCopy or ShortcutAction.TerminalPaste
+                or ShortcutAction.TerminalSelectAll => _selectedTerminal is not null,
+            _ => ActivePaneSnapshot() is not null,
+        };
+    }
+
+    private bool ExecuteShortcut(ShortcutMatch match)
+    {
+        if (!CanExecuteShortcut(match))
+        {
+            return false;
+        }
+        var pane = ActivePaneSnapshot();
+        var tab = ActiveTabSnapshot();
+        var screen = SelectedScreenSnapshot();
+        switch (match.Action)
+        {
+            case ShortcutAction.NewScreen:
+                Mutate(() => _mux.CreateScreen(Workspace.PublicId), $"create screen in {Workspace.PublicId}");
+                return true;
+            case ShortcutAction.PreviousScreen:
+                return SelectScreenOffset(-1);
+            case ShortcutAction.NextScreen:
+                return SelectScreenOffset(1);
+            case ShortcutAction.SelectScreen:
+                return SelectScreenIndex(match.Index);
+            case ShortcutAction.RenameScreen when screen is not null:
+                _ = RenameScreenAsync(screen);
+                return true;
+            case ShortcutAction.CloseScreen when screen is not null:
+                Mutate(() => _mux.CloseScreen(screen.Id), $"close screen {screen.Id}");
+                return true;
+            case ShortcutAction.SplitPaneRight when pane is not null:
+                Mutate(() => _mux.SplitPane(pane.Id, "right"), $"split right {pane.Id}");
+                return true;
+            case ShortcutAction.SplitPaneDown when pane is not null:
+                Mutate(() => _mux.SplitPane(pane.Id, "down"), $"split down {pane.Id}");
+                return true;
+            case ShortcutAction.FocusPaneLeft:
+                return FocusPaneDirection("left");
+            case ShortcutAction.FocusPaneRight:
+                return FocusPaneDirection("right");
+            case ShortcutAction.FocusPaneUp:
+                return FocusPaneDirection("up");
+            case ShortcutAction.FocusPaneDown:
+                return FocusPaneDirection("down");
+            case ShortcutAction.TogglePaneZoom when pane is not null:
+                Mutate(() => _mux.ZoomPane(pane.Id), $"zoom pane {pane.Id}");
+                return true;
+            case ShortcutAction.RenamePane when pane is not null:
+                _ = RenamePaneAsync(pane.Id);
+                return true;
+            case ShortcutAction.ClosePane when pane is not null:
+                Mutate(() => _mux.ClosePane(pane.Id), $"close pane {pane.Id}");
+                return true;
+            case ShortcutAction.NewTerminalTab:
+                if (pane is not null)
+                {
+                    Mutate(() => _mux.CreateTab(pane.Id), $"create tab in {pane.Id}");
+                }
+                else
+                {
+                    Mutate(() => _mux.CreateTerminal(Workspace.PublicId), $"create terminal in {Workspace.PublicId}");
+                }
+                return true;
+            case ShortcutAction.NewBrowserTab when pane is not null:
+                _ = CreateBrowserAsync(pane.Id);
+                return true;
+            case ShortcutAction.PreviousTab:
+                return SelectTabOffset(-1);
+            case ShortcutAction.NextTab:
+                return SelectTabOffset(1);
+            case ShortcutAction.SelectTab:
+                return SelectTabIndex(match.Index);
+            case ShortcutAction.MoveTabLeft when tab is not null:
+                MoveTab(tab, tab.PaneId, tab.Index - 1);
+                return true;
+            case ShortcutAction.MoveTabRight when tab is not null:
+                MoveTab(tab, tab.PaneId, tab.Index + 1);
+                return true;
+            case ShortcutAction.MoveTabToPane when tab is not null:
+                return MoveTabToPane(tab, match.Index);
+            case ShortcutAction.RenameTab when tab is not null:
+                _ = RenameTabAsync(tab);
+                return true;
+            case ShortcutAction.CloseTab when tab is not null:
+                Mutate(() => _mux.CloseTab(tab.Id), $"close tab {tab.Id}");
+                return true;
+            case ShortcutAction.BrowserBack or ShortcutAction.BrowserForward
+                or ShortcutAction.BrowserReload or ShortcutAction.BrowserFocusAddress:
+                return SelectedBrowser?.HandleShortcut(match.Action) == true;
+            case ShortcutAction.TerminalCopy or ShortcutAction.TerminalPaste
+                or ShortcutAction.TerminalSelectAll:
+                return _selectedTerminal?.HandleShortcut(match.Action) == true;
+            default:
+                return false;
+        }
+    }
+
+    private ScreenSnapshot? SelectedScreenSnapshot() =>
+        _snapshot?.Screens.FirstOrDefault(screen =>
+            screen.WorkspaceId == Workspace.PublicId && screen.Focused);
+
+    private PaneSnapshot? ActivePaneSnapshot() =>
+        _snapshot?.Panes.FirstOrDefault(pane => pane.Id == _activePaneId);
+
+    private TabSnapshot? ActiveTabSnapshot() =>
+        _snapshot?.Tabs.FirstOrDefault(tab => tab.PaneId == _activePaneId && tab.Focused);
+
+    private List<ScreenSnapshot> OrderedScreens() =>
+        _snapshot?.Screens
+            .Where(screen => screen.WorkspaceId == Workspace.PublicId)
+            .OrderBy(screen => screen.Index)
+            .ToList() ?? [];
+
+    private List<TabSnapshot> ActivePaneTabs() =>
+        _snapshot?.Tabs
+            .Where(tab => tab.PaneId == _activePaneId)
+            .OrderBy(tab => tab.Index)
+            .ToList() ?? [];
+
+    private List<PaneSnapshot> OrderedPanes()
+    {
+        if (_snapshot is null)
+        {
+            return [];
+        }
+        var panes = _snapshot.Panes.ToDictionary(pane => pane.Id, StringComparer.Ordinal);
+        var ordered = new List<PaneSnapshot>();
+        foreach (var screen in OrderedScreens())
+        {
+            AppendPanes(screen.Layout.Root, panes, ordered);
+        }
+        return ordered;
+    }
+
+    private static void AppendPanes(
+        LayoutNodeSnapshot node,
+        IReadOnlyDictionary<string, PaneSnapshot> panes,
+        List<PaneSnapshot> ordered)
+    {
+        if (node.PaneId is { } paneId && panes.TryGetValue(paneId, out var leafPane))
+        {
+            ordered.Add(leafPane);
+            return;
+        }
+        foreach (var paneInStack in node.PaneIds)
+        {
+            if (panes.TryGetValue(paneInStack, out var stackedPane))
+            {
+                ordered.Add(stackedPane);
+            }
+        }
+        foreach (var column in node.Columns)
+        {
+            AppendPanes(column.Root, panes, ordered);
+        }
+        if (node.First is not null)
+        {
+            AppendPanes(node.First, panes, ordered);
+        }
+        if (node.Second is not null)
+        {
+            AppendPanes(node.Second, panes, ordered);
+        }
+    }
+
+    private bool SelectScreenOffset(int delta)
+    {
+        var screens = OrderedScreens();
+        var current = screens.FindIndex(screen => screen.Focused);
+        if (screens.Count == 0 || current < 0)
+        {
+            return false;
+        }
+        return SelectScreenIndex((current + delta + screens.Count) % screens.Count);
+    }
+
+    private bool SelectScreenIndex(int index)
+    {
+        var screens = OrderedScreens();
+        if (index < 0 || index >= screens.Count)
+        {
+            return false;
+        }
+        Mutate(() => _mux.FocusScreen(screens[index].Id), $"focus screen {screens[index].Id}");
+        return true;
+    }
+
+    private bool SelectTabOffset(int delta)
+    {
+        var tabs = ActivePaneTabs();
+        var current = tabs.FindIndex(tab => tab.Focused);
+        if (tabs.Count == 0 || current < 0)
+        {
+            return false;
+        }
+        return SelectTabIndex((current + delta + tabs.Count) % tabs.Count);
+    }
+
+    private bool SelectTabIndex(int index)
+    {
+        var tabs = ActivePaneTabs();
+        if (index < 0 || index >= tabs.Count)
+        {
+            return false;
+        }
+        Mutate(() => _mux.SelectTab(tabs[index].Id), $"focus tab {tabs[index].Id}");
+        return true;
+    }
+
+    private bool MoveTabToPane(TabSnapshot tab, int index)
+    {
+        var panes = OrderedPanes();
+        if (index < 0 || index >= panes.Count || panes[index].Id == tab.PaneId)
+        {
+            return false;
+        }
+        MoveTab(tab, panes[index].Id, int.MaxValue);
+        return true;
+    }
+
+    private bool FocusPaneDirection(string direction)
+    {
+        if (_activePaneId is null)
+        {
+            return false;
+        }
+        Mutate(
+            () => _mux.FocusPaneDirection(_activePaneId, direction),
+            $"focus {direction} from {_activePaneId}");
+        return true;
+    }
+
+    private bool HandleBrowserAccelerator(int virtualKey, bool down, bool repeat)
+    {
+        var match = ShortcutDefinitions.Match(
+            new(virtualKey, ShortcutKeyState.CurrentModifiers(), ShortcutKeyState.IsAltGr()),
+            ShortcutContexts.Browser);
+        if (match is null)
+        {
+            return false;
+        }
+        if (match.Value.Owner == ShortcutOwner.MainWindow)
+        {
+            if (down && !repeat)
+            {
+                DispatcherQueue.TryEnqueue(() => MainWindowShortcutRequested?.Invoke(match.Value));
+            }
+            return true;
+        }
+        if (!CanExecuteShortcut(match.Value))
+        {
+            return false;
+        }
+        if (down && !repeat)
+        {
+            DispatcherQueue.TryEnqueue(() => ExecuteShortcut(match.Value));
+        }
+        return true;
+    }
 
     internal bool ActivatePaneAt(Point point)
     {
@@ -475,7 +746,7 @@ internal sealed class WorkspaceView : UserControl, IDisposable
             CloseButtonText = Loc.S("Action_Cancel"),
             DefaultButton = ContentDialogButton.Primary,
         };
-        if (await dialog.ShowAsync() == ContentDialogResult.Primary)
+        if (await ShowDialogAsync(dialog) == ContentDialogResult.Primary)
         {
             var value = string.IsNullOrWhiteSpace(name.Text) ? null : name.Text.Trim();
             Mutate(() => _mux.RenameScreen(screen.Id, value), $"rename screen {screen.Id}");
@@ -814,7 +1085,7 @@ internal sealed class WorkspaceView : UserControl, IDisposable
                 _renderedBrowsers.Add(tab.Id);
                 if (!_browsers.TryGetValue(tab.Id, out var browser))
                 {
-                    browser = new BrowserView(_mux, browserSnapshot);
+                    browser = new BrowserView(_mux, browserSnapshot, HandleBrowserAccelerator);
                     var tabId = tab.Id;
                     browser.DocumentTitleChanged += () => UpdateBrowserTitle(tabId, browser);
                     _browsers[tab.Id] = browser;
@@ -938,7 +1209,7 @@ internal sealed class WorkspaceView : UserControl, IDisposable
             CloseButtonText = Loc.S("Action_Cancel"),
             DefaultButton = ContentDialogButton.Primary,
         };
-        if (await dialog.ShowAsync() == ContentDialogResult.Primary)
+        if (await ShowDialogAsync(dialog) == ContentDialogResult.Primary)
         {
             Mutate(
                 () => _mux.CreateBrowser(paneId, address.Text.Trim()),
@@ -1003,7 +1274,7 @@ internal sealed class WorkspaceView : UserControl, IDisposable
             CloseButtonText = Loc.S("Action_Cancel"),
             DefaultButton = ContentDialogButton.Primary,
         };
-        if (await dialog.ShowAsync() == ContentDialogResult.Primary)
+        if (await ShowDialogAsync(dialog) == ContentDialogResult.Primary)
         {
             var value = string.IsNullOrEmpty(name.Text) ? null : name.Text;
             Mutate(() => _mux.RenameTab(tab.Id, value), $"rename tab {tab.Id}");
@@ -1077,10 +1348,24 @@ internal sealed class WorkspaceView : UserControl, IDisposable
             CloseButtonText = Loc.S("Action_Cancel"),
             DefaultButton = ContentDialogButton.Primary,
         };
-        if (await dialog.ShowAsync() == ContentDialogResult.Primary)
+        if (await ShowDialogAsync(dialog) == ContentDialogResult.Primary)
         {
             var value = string.IsNullOrWhiteSpace(name.Text) ? null : name.Text.Trim();
             Mutate(() => _mux.RenamePane(paneId, value), $"rename pane {paneId}");
+        }
+    }
+
+    private async System.Threading.Tasks.Task<ContentDialogResult> ShowDialogAsync(
+        ContentDialog dialog)
+    {
+        _dialogOpen = true;
+        try
+        {
+            return await dialog.ShowAsync();
+        }
+        finally
+        {
+            _dialogOpen = false;
         }
     }
 

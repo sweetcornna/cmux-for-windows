@@ -6,6 +6,17 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ## [Unreleased]
 
+### Added
+
+- Added a centralized Windows shortcut catalog covering workspace, screen, pane, tab, browser, and terminal actions, including position selection for the first ten workspaces, screens, and tabs.
+- Added a package-free shortcut regression executable and Windows CI coverage for every defined action, exact modifier/context matching, AltGr exclusion, and destructive-key repeat protection.
+
+### Fixed
+
+- Routed application shortcuts before terminal and WebView input, while preserving text input in address/search fields, Settings, modal dialogs, and Right Alt/AltGr layouts.
+- Completed terminal physical-key forwarding for OEM and international punctuation, left/right modifiers, Windows/Super, lock state, system keys, function/navigation keys, and numpad variants, including press, repeat, release, and focus-reset behavior.
+- Cleared stale native character suppression when the active workspace input target changes, preventing delayed character messages from being dropped.
+
 ## [0.3.4] - 2026-08-11
 
 ### Changed

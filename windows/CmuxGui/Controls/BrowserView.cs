@@ -1,4 +1,5 @@
 using System;
+using CmuxGui.Input;
 using CmuxGui.Services;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
@@ -24,10 +25,15 @@ internal sealed class BrowserView : UserControl, IDisposable
     private bool _native;
     private bool _ready;
     private bool _disposed;
+    private readonly Func<int, bool, bool, bool> _handleAccelerator;
 
-    public BrowserView(MuxRuntime mux, BrowserSnapshot snapshot)
+    public BrowserView(
+        MuxRuntime mux,
+        BrowserSnapshot snapshot,
+        Func<int, bool, bool, bool> handleAccelerator)
     {
         _mux = mux;
+        _handleAccelerator = handleAccelerator;
         _browserId = snapshot.Id;
         _lastPersistedUrl = snapshot.Url;
         _native = snapshot.Source == "native";
@@ -41,6 +47,9 @@ internal sealed class BrowserView : UserControl, IDisposable
         _reload.Click += (_, _) => Reload();
         _go.Click += (_, _) => NavigateAddress();
         _address.KeyDown += OnAddressKeyDown;
+        _address.KeyUp += OnAddressKeyUp;
+        _webView.KeyDown += OnWebViewKeyDown;
+        _webView.KeyUp += OnWebViewKeyUp;
 
         var toolbar = new Grid
         {
@@ -182,12 +191,62 @@ internal sealed class BrowserView : UserControl, IDisposable
 
     private void OnAddressKeyDown(object sender, KeyRoutedEventArgs args)
     {
-        if (args.Key != VirtualKey.Enter)
+        if (args.Key == VirtualKey.Enter)
         {
+            NavigateAddress();
+            args.Handled = true;
             return;
         }
-        NavigateAddress();
-        args.Handled = true;
+        if (_handleAccelerator((int)args.Key, true, args.KeyStatus.WasKeyDown))
+        {
+            args.Handled = true;
+        }
+    }
+
+    private void OnAddressKeyUp(object sender, KeyRoutedEventArgs args)
+    {
+        if (_handleAccelerator((int)args.Key, false, false))
+        {
+            args.Handled = true;
+        }
+    }
+
+    private void OnWebViewKeyDown(object sender, KeyRoutedEventArgs args)
+    {
+        if (_handleAccelerator((int)args.Key, true, args.KeyStatus.WasKeyDown))
+        {
+            args.Handled = true;
+        }
+    }
+
+    private void OnWebViewKeyUp(object sender, KeyRoutedEventArgs args)
+    {
+        if (_handleAccelerator((int)args.Key, false, false))
+        {
+            args.Handled = true;
+        }
+    }
+
+    internal bool HandleShortcut(ShortcutAction action)
+    {
+        switch (action)
+        {
+            case ShortcutAction.BrowserBack:
+                GoBack();
+                return true;
+            case ShortcutAction.BrowserForward:
+                GoForward();
+                return true;
+            case ShortcutAction.BrowserReload:
+                Reload();
+                return true;
+            case ShortcutAction.BrowserFocusAddress:
+                _address.Focus(FocusState.Keyboard);
+                _address.SelectAll();
+                return true;
+            default:
+                return false;
+        }
     }
 
     private void NavigateAddress()
@@ -251,6 +310,10 @@ internal sealed class BrowserView : UserControl, IDisposable
         }
         _disposed = true;
         Loaded -= OnLoaded;
+        _address.KeyDown -= OnAddressKeyDown;
+        _address.KeyUp -= OnAddressKeyUp;
+        _webView.KeyDown -= OnWebViewKeyDown;
+        _webView.KeyUp -= OnWebViewKeyUp;
         if (_webView.CoreWebView2 is not null)
         {
             _webView.CoreWebView2.DocumentTitleChanged -= OnDocumentTitleChanged;

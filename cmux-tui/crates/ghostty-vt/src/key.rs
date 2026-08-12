@@ -24,6 +24,10 @@ impl Mods {
     pub const SUPER: Mods = Mods(sys::GHOSTTY_MODS_SUPER as u16);
     pub const CAPS_LOCK: Mods = Mods(sys::GHOSTTY_MODS_CAPS_LOCK as u16);
     pub const NUM_LOCK: Mods = Mods(sys::GHOSTTY_MODS_NUM_LOCK as u16);
+    pub const SHIFT_SIDE: Mods = Mods(sys::GHOSTTY_MODS_SHIFT_SIDE as u16);
+    pub const CTRL_SIDE: Mods = Mods(sys::GHOSTTY_MODS_CTRL_SIDE as u16);
+    pub const ALT_SIDE: Mods = Mods(sys::GHOSTTY_MODS_ALT_SIDE as u16);
+    pub const SUPER_SIDE: Mods = Mods(sys::GHOSTTY_MODS_SUPER_SIDE as u16);
 
     pub fn contains(self, other: Mods) -> bool {
         self.0 & other.0 == other.0
@@ -100,6 +104,13 @@ pub fn key_input_from_chord(chord: &str) -> Option<KeyInput> {
             "ctrl" | "control" => mods = mods | Mods::CTRL,
             "alt" | "option" => mods = mods | Mods::ALT,
             "shift" => mods = mods | Mods::SHIFT,
+            "super" | "meta" => mods = mods | Mods::SUPER,
+            "rshift" => mods = mods | Mods::SHIFT | Mods::SHIFT_SIDE,
+            "rctrl" => mods = mods | Mods::CTRL | Mods::CTRL_SIDE,
+            "ralt" => mods = mods | Mods::ALT | Mods::ALT_SIDE,
+            "rsuper" => mods = mods | Mods::SUPER | Mods::SUPER_SIDE,
+            "caps" => mods = mods | Mods::CAPS_LOCK,
+            "num" => mods = mods | Mods::NUM_LOCK,
             "" => return None,
             other => {
                 if key_name.is_some() {
@@ -140,6 +151,20 @@ pub fn key_input_from_chord(chord: &str) -> Option<KeyInput> {
         return Some(input);
     }
     match key_name {
+        "intlbackslash" => input.key = sys::GHOSTTY_KEY_INTL_BACKSLASH,
+        "altleft" => input.key = sys::GHOSTTY_KEY_ALT_LEFT,
+        "altright" => input.key = sys::GHOSTTY_KEY_ALT_RIGHT,
+        "capslock" => input.key = sys::GHOSTTY_KEY_CAPS_LOCK,
+        "contextmenu" => input.key = sys::GHOSTTY_KEY_CONTEXT_MENU,
+        "controlleft" => input.key = sys::GHOSTTY_KEY_CONTROL_LEFT,
+        "controlright" => input.key = sys::GHOSTTY_KEY_CONTROL_RIGHT,
+        "metaleft" => input.key = sys::GHOSTTY_KEY_META_LEFT,
+        "metaright" => input.key = sys::GHOSTTY_KEY_META_RIGHT,
+        "shiftleft" => input.key = sys::GHOSTTY_KEY_SHIFT_LEFT,
+        "shiftright" => input.key = sys::GHOSTTY_KEY_SHIFT_RIGHT,
+        "convert" => input.key = sys::GHOSTTY_KEY_CONVERT,
+        "kanamode" => input.key = sys::GHOSTTY_KEY_KANA_MODE,
+        "nonconvert" => input.key = sys::GHOSTTY_KEY_NON_CONVERT,
         "enter" | "return" => input.key = sys::GHOSTTY_KEY_ENTER,
         "tab" => input.key = sys::GHOSTTY_KEY_TAB,
         "backtab" => {
@@ -159,6 +184,9 @@ pub fn key_input_from_chord(chord: &str) -> Option<KeyInput> {
         "pageup" => input.key = sys::GHOSTTY_KEY_PAGE_UP,
         "pagedown" => input.key = sys::GHOSTTY_KEY_PAGE_DOWN,
         "numlock" => input.key = sys::GHOSTTY_KEY_NUM_LOCK,
+        "printscreen" => input.key = sys::GHOSTTY_KEY_PRINT_SCREEN,
+        "scrolllock" => input.key = sys::GHOSTTY_KEY_SCROLL_LOCK,
+        "pause" => input.key = sys::GHOSTTY_KEY_PAUSE,
         "numpadenter" => input.key = sys::GHOSTTY_KEY_NUMPAD_ENTER,
         "numpadup" => input.key = sys::GHOSTTY_KEY_NUMPAD_UP,
         "numpaddown" => input.key = sys::GHOSTTY_KEY_NUMPAD_DOWN,
@@ -450,6 +478,36 @@ mod tests {
         assert_eq!(numpad.key, sys::GHOSTTY_KEY_NUMPAD_7);
         assert_eq!(numpad.utf8, "7");
         assert_eq!(key_input_from_chord("numpadenter").unwrap().key, sys::GHOSTTY_KEY_NUMPAD_ENTER);
+
+        let ctrl_bracket = key_input_from_chord("ctrl+[").unwrap();
+        assert_eq!(ctrl_bracket.key, sys::GHOSTTY_KEY_BRACKET_LEFT);
+        assert!(ctrl_bracket.mods.contains(Mods::CTRL));
+        assert!(ctrl_bracket.utf8.is_empty());
+
+        let alt_slash = key_input_from_chord("alt+/").unwrap();
+        assert_eq!(alt_slash.key, sys::GHOSTTY_KEY_SLASH);
+        assert!(alt_slash.mods.contains(Mods::ALT));
+        assert_eq!(alt_slash.utf8, "/");
+
+        let system_key = key_input_from_chord("rsuper+caps+num+contextmenu").unwrap();
+        assert_eq!(system_key.key, sys::GHOSTTY_KEY_CONTEXT_MENU);
+        assert!(system_key.mods.contains(Mods::SUPER));
+        assert!(system_key.mods.contains(Mods::SUPER_SIDE));
+        assert!(system_key.mods.contains(Mods::CAPS_LOCK));
+        assert!(system_key.mods.contains(Mods::NUM_LOCK));
+        assert_eq!(
+            key_input_from_chord("controlright").unwrap().key,
+            sys::GHOSTTY_KEY_CONTROL_RIGHT
+        );
+        assert_eq!(
+            key_input_from_chord("intlbackslash").unwrap().key,
+            sys::GHOSTTY_KEY_INTL_BACKSLASH
+        );
+        assert_eq!(key_input_from_chord("printscreen").unwrap().key, sys::GHOSTTY_KEY_PRINT_SCREEN);
+        assert_eq!(
+            key_input_from_chord("numpadseparator").unwrap().key,
+            sys::GHOSTTY_KEY_NUMPAD_SEPARATOR
+        );
 
         assert!(key_input_from_chord("not-a-key").is_none());
     }

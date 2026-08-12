@@ -1,9 +1,13 @@
 using System;
 using System.Collections.Generic;
+using System.Globalization;
+using System.Linq;
 using System.Text;
+using CmuxGui.Input;
 using CmuxGui.Interop;
 using CmuxGui.Services;
 using Microsoft.Graphics.Canvas;
+using Microsoft.UI.Input;
 using Microsoft.Graphics.Canvas.Text;
 using Microsoft.Graphics.Canvas.UI.Xaml;
 using Microsoft.UI;
@@ -171,11 +175,7 @@ public sealed partial class TerminalView : UserControl, IDisposable
             + $"(state={e.FocusState}, direction={e.Direction}, cancelable={e.Cancel})");
         LostFocus += (_, _) =>
         {
-            foreach (var chord in _structuredKeysDown.Values)
-            {
-                SendKey(chord, 0);
-            }
-            _structuredKeysDown.Clear();
+            ResetStructuredKeyState();
             var holder = XamlRoot is null
                 ? "no-xaml-root"
                 : FocusManager.GetFocusedElement(XamlRoot)?.GetType().FullName ?? "nothing";
@@ -194,6 +194,7 @@ public sealed partial class TerminalView : UserControl, IDisposable
         _hostActive = active;
         if (!active)
         {
+            ResetStructuredKeyState();
             _timer.Stop();
             return;
         }
@@ -843,6 +844,28 @@ public sealed partial class TerminalView : UserControl, IDisposable
     internal void ForwardCharacterReceived(CharacterReceivedRoutedEventArgs args) =>
         OnCharacterReceived(this, args);
 
+    internal bool HandleShortcut(ShortcutAction action)
+    {
+        if (!_hostActive)
+        {
+            return false;
+        }
+        switch (action)
+        {
+            case ShortcutAction.TerminalCopy:
+                CopySelection();
+                return true;
+            case ShortcutAction.TerminalPaste:
+                _ = PasteAsync();
+                return true;
+            case ShortcutAction.TerminalSelectAll:
+                SelectAll();
+                return true;
+            default:
+                return false;
+        }
+    }
+
     internal bool ForwardCharacterReceived(uint keyCode)
     {
         var text = keyCode <= char.MaxValue
@@ -897,23 +920,72 @@ public sealed partial class TerminalView : UserControl, IDisposable
         var control = IsKeyDown(VirtualKey.Control);
         var alt = IsKeyDown(VirtualKey.Menu);
         var shift = IsKeyDown(VirtualKey.Shift);
-        if (key is null || (!control && !alt && IsPrintableKey(virtualKey)))
+        var super = IsKeyDown(VirtualKey.LeftWindows) || IsKeyDown(VirtualKey.RightWindows);
+        var rightShift = IsKeyDown(VirtualKey.RightShift);
+        var rightControl = IsKeyDown(VirtualKey.RightControl);
+        var rightAlt = IsKeyDown(VirtualKey.RightMenu);
+        var rightSuper = IsKeyDown(VirtualKey.RightWindows);
+        var capsLock = IsLocked(VirtualKey.CapitalLock);
+        var numLock = IsLocked(VirtualKey.NumberKeyLock);
+        if (rightAlt && control)
+        {
+            control = false;
+            alt = false;
+            rightControl = false;
+            rightAlt = false;
+            if (virtualKey is VirtualKey.Control or VirtualKey.LeftControl
+                or VirtualKey.RightControl or VirtualKey.Menu
+                or VirtualKey.LeftMenu or VirtualKey.RightMenu)
+            {
+                ReleaseStructuredControlKeys();
+                return false;
+            }
+        }
+        if (key is null || (!control && !alt && !super && IsPrintableKey(virtualKey)))
         {
             return false;
         }
 
         var chord = new StringBuilder();
-        if (control)
+        if (rightControl)
+        {
+            chord.Append("rctrl+");
+        }
+        else if (control)
         {
             chord.Append("ctrl+");
         }
-        if (alt)
+        if (rightAlt)
+        {
+            chord.Append("ralt+");
+        }
+        else if (alt)
         {
             chord.Append("alt+");
         }
-        if (shift)
+        if (rightShift)
+        {
+            chord.Append("rshift+");
+        }
+        else if (shift)
         {
             chord.Append("shift+");
+        }
+        if (rightSuper)
+        {
+            chord.Append("rsuper+");
+        }
+        else if (super)
+        {
+            chord.Append("super+");
+        }
+        if (capsLock)
+        {
+            chord.Append("caps+");
+        }
+        if (numLock)
+        {
+            chord.Append("num+");
         }
         chord.Append(key);
         var value = chord.ToString();
@@ -957,7 +1029,10 @@ public sealed partial class TerminalView : UserControl, IDisposable
     private static bool IsPrintableKey(VirtualKey key) =>
         key is >= VirtualKey.A and <= VirtualKey.Z
         || key is >= VirtualKey.Number0 and <= VirtualKey.Number9
-        || key is VirtualKey.Space;
+        || key is VirtualKey.Space
+        || (int)key is >= 0xBA and <= 0xC0
+        || (int)key is >= 0xDB and <= 0xDE
+        || (int)key == 0xE2;
 
     private static bool NumpadProducesCharacter(string key) => key is
         "numpad0" or "numpad1" or "numpad2" or "numpad3" or "numpad4"
@@ -972,6 +1047,10 @@ public sealed partial class TerminalView : UserControl, IDisposable
         if (NumpadKeyName(key, status) is { } numpad)
         {
             return numpad;
+        }
+        if (ModifierKeyName(key, status) is { } modifier)
+        {
+            return modifier;
         }
         if (key is >= VirtualKey.A and <= VirtualKey.Z)
         {
@@ -1003,14 +1082,77 @@ public sealed partial class TerminalView : UserControl, IDisposable
             VirtualKey.PageDown => "pagedown",
             VirtualKey.Space => "space",
             VirtualKey.NumberKeyLock => "numlock",
-            _ => null,
+            VirtualKey.CapitalLock => "capslock",
+            VirtualKey.Scroll => "scrolllock",
+            VirtualKey.Snapshot => "printscreen",
+            VirtualKey.Pause => "pause",
+            VirtualKey.Application => "contextmenu",
+            VirtualKey.Convert => "convert",
+            VirtualKey.NonConvert => "nonconvert",
+            VirtualKey.Kana => "kanamode",
+            _ => OemKeyName(key),
         };
     }
+
+    private static string? ModifierKeyName(
+        VirtualKey key,
+        Windows.UI.Core.CorePhysicalKeyStatus status) => key switch
+    {
+        VirtualKey.Shift => status.ScanCode == 0x36 ? "shiftright" : "shiftleft",
+        VirtualKey.LeftShift => "shiftleft",
+        VirtualKey.RightShift => "shiftright",
+        VirtualKey.Control => status.IsExtendedKey ? "controlright" : "controlleft",
+        VirtualKey.LeftControl => "controlleft",
+        VirtualKey.RightControl => "controlright",
+        VirtualKey.Menu => status.IsExtendedKey ? "altright" : "altleft",
+        VirtualKey.LeftMenu => "altleft",
+        VirtualKey.RightMenu => "altright",
+        VirtualKey.LeftWindows => "metaleft",
+        VirtualKey.RightWindows => "metaright",
+        _ => null,
+    };
+
+    private static string? OemKeyName(VirtualKey key) => (int)key switch
+    {
+        0xBA => ";",
+        0xBB => "=",
+        0xBC => ",",
+        0xBD => "-",
+        0xBE => ".",
+        0xBF => "/",
+        0xC0 => "`",
+        0xDB => "[",
+        0xDC => "\\",
+        0xDD => "]",
+        0xDE => "'",
+        _ => null,
+    };
 
     private static string? NumpadKeyName(
         VirtualKey key,
         Windows.UI.Core.CorePhysicalKeyStatus status)
     {
+        if ((int)key is >= 0x60 and <= 0x69)
+        {
+            return $"numpad{(int)key - 0x60}";
+        }
+        var direct = (int)key switch
+        {
+            0x6A => "numpadmultiply",
+            0x6B => "numpadadd",
+            0x6C => "numpadseparator",
+            0x6D => "numpadsubtract",
+            0x6E => CultureInfo.CurrentCulture.NumberFormat.NumberDecimalSeparator == ","
+                ? "numpadcomma"
+                : "numpaddecimal",
+            0x6F => "numpaddivide",
+            0x92 => "numpadequal",
+            _ => null,
+        };
+        if (direct is not null)
+        {
+            return direct;
+        }
         if (status.IsExtendedKey)
         {
             return status.ScanCode switch
@@ -1040,6 +1182,31 @@ public sealed partial class TerminalView : UserControl, IDisposable
         };
     }
 
+    private void ReleaseStructuredControlKeys()
+    {
+        foreach (var identity in _structuredKeysDown.Keys
+                     .Where(identity => identity.Key is VirtualKey.Control
+                         or VirtualKey.LeftControl or VirtualKey.RightControl
+                         or VirtualKey.Menu or VirtualKey.LeftMenu or VirtualKey.RightMenu)
+                     .ToList())
+        {
+            if (_structuredKeysDown.Remove(identity, out var chord))
+            {
+                SendKey(chord, 0);
+            }
+        }
+    }
+
+    private void ResetStructuredKeyState()
+    {
+        foreach (var chord in _structuredKeysDown.Values)
+        {
+            SendKey(chord, 0);
+        }
+        _structuredKeysDown.Clear();
+        _suppressStructuredCharacter = false;
+    }
+
     private void SendKey(string chord, byte action)
     {
         if (_session == IntPtr.Zero)
@@ -1048,7 +1215,10 @@ public sealed partial class TerminalView : UserControl, IDisposable
             return;
         }
         var bytes = Encoding.UTF8.GetBytes(chord);
-        CmuxNative.SessionKeyEvent(_session, bytes, (nuint)bytes.Length, action);
+        if (CmuxNative.SessionKeyEvent(_session, bytes, (nuint)bytes.Length, action) != 0)
+        {
+            Diag.Log("terminal key event failed");
+        }
     }
 
     private void Send(byte[] bytes)
@@ -1092,10 +1262,13 @@ public sealed partial class TerminalView : UserControl, IDisposable
         }
     }
 
-    private static bool IsKeyDown(VirtualKey key) => (GetKeyState((int)key) & 0x8000) != 0;
+    private static bool IsKeyDown(VirtualKey key) =>
+        (InputKeyboardSource.GetKeyStateForCurrentThread(key)
+            & Windows.UI.Core.CoreVirtualKeyStates.Down) != 0;
 
-    [System.Runtime.InteropServices.DllImport("user32.dll")]
-    private static extern short GetKeyState(int virtualKey);
+    private static bool IsLocked(VirtualKey key) =>
+        (InputKeyboardSource.GetKeyStateForCurrentThread(key)
+            & Windows.UI.Core.CoreVirtualKeyStates.Locked) != 0;
 
     private static Color FromPacked(uint packed, Color fallback)
     {
@@ -1133,6 +1306,7 @@ public sealed partial class TerminalView : UserControl, IDisposable
         {
             return;
         }
+        ResetStructuredKeyState();
         _disposed = true;
 
         AppSettings.Changed -= OnSettingsChanged;

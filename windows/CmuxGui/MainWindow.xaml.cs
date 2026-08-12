@@ -4,6 +4,7 @@ using System.Linq;
 using System.Runtime.InteropServices;
 using System.Text;
 using CmuxGui.Controls;
+using CmuxGui.Input;
 using CmuxGui.Services;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Automation;
@@ -85,10 +86,12 @@ public sealed partial class MainWindow : Window
     private long _inputBridgeDeadline;
     private readonly DispatcherTimer _inputBridgeTimer = new();
     private readonly DispatcherTimer _topologyTimer = new();
+    private readonly HashSet<(VirtualKey Key, uint ScanCode, bool Extended)> _applicationKeysDown = [];
     private string _snapshotGeneration = string.Empty;
     private string _snapshotRevision = string.Empty;
     private bool _topologyPolling;
     private bool _topologyFailureLogged;
+    private bool _dialogOpen;
     private int _tabCounter;
     private bool _windowActivated;
     private bool _closed;
@@ -142,20 +145,48 @@ public sealed partial class MainWindow : Window
         UIntPtr subclassId,
         UIntPtr referenceData)
     {
+        var activeTarget = _workspaceInputBridgeActive
+            && _workspaceInputTarget is { } candidate
+            && ReferenceEquals(_visibleWorkspace, candidate)
+                ? candidate
+                : null;
+        var acceptsApplicationInput = activeTarget is { } candidateTarget
+            && AcceptsApplicationInput(candidateTarget);
         if (message is WmChar or WmSysChar && _bridgeCharacterKey is not null)
         {
             _bridgeCharacterKey = null;
             return IntPtr.Zero;
         }
+        if (message is WmChar or WmSysChar)
+        {
+            _bridgeCharacterKey = null;
+        }
+        if (message is WmKeyUp or WmSysKeyUp)
+        {
+            var key = (VirtualKey)(uint)wParam.ToInt64();
+            if (_bridgeCharacterKey == key)
+            {
+                _bridgeCharacterKey = null;
+            }
+            var status = PhysicalKeyStatusOf(lParam);
+            if (_applicationKeysDown.Remove((key, status.ScanCode, status.IsExtendedKey)))
+            {
+                return IntPtr.Zero;
+            }
+        }
 
-        if (_workspaceInputBridgeActive
-            && _workspaceInputTarget is { } target
-            && ReferenceEquals(_visibleWorkspace, target))
+        if (acceptsApplicationInput && activeTarget is { } target)
         {
             if (message is WmKeyDown or WmSysKeyDown)
             {
                 var key = (VirtualKey)(uint)wParam.ToInt64();
                 var status = PhysicalKeyStatusOf(lParam);
+                if (TryHandleShortcut(target, key, status, out var matched))
+                {
+                    _bridgeCharacterKey = matched && KeyCanProduceCharacter(key) ? key : null;
+                    return IntPtr.Zero;
+                }
+
                 if (_nativePaneInputTarget is { } terminal
                     ? terminal.ForwardKeyDown(key, status)
                     : target.ForwardKeyDown(key, status))
@@ -167,10 +198,6 @@ public sealed partial class MainWindow : Window
             else if (message is WmKeyUp or WmSysKeyUp)
             {
                 var key = (VirtualKey)(uint)wParam.ToInt64();
-                if (_bridgeCharacterKey == key)
-                {
-                    _bridgeCharacterKey = null;
-                }
                 var status = PhysicalKeyStatusOf(lParam);
                 if (_nativePaneInputTarget is { } terminal
                     ? terminal.ForwardKeyUp(key, status)
@@ -192,6 +219,94 @@ public sealed partial class MainWindow : Window
         }
 
         return DefSubclassProc(window, message, wParam, lParam);
+    }
+
+    private bool AcceptsApplicationInput(WorkspaceView target)
+    {
+        if (_dialogOpen
+            || SettingsFrame.Visibility == Visibility.Visible
+            || !target.AcceptsApplicationInput)
+        {
+            return false;
+        }
+        var focused = RootGrid.XamlRoot is null
+            ? null
+            : FocusManager.GetFocusedElement(RootGrid.XamlRoot) as DependencyObject;
+        return !IsTextEntry(focused);
+    }
+
+    private bool TryHandleShortcut(
+        WorkspaceView target,
+        VirtualKey key,
+        Windows.UI.Core.CorePhysicalKeyStatus status,
+        out bool matched)
+    {
+        matched = false;
+        var match = ShortcutDefinitions.Match(
+            new((int)key, ShortcutKeyState.CurrentModifiers(), ShortcutKeyState.IsAltGr()),
+            target.ShortcutContext);
+        if (match is null)
+        {
+            return false;
+        }
+        matched = true;
+        var identity = (key, status.ScanCode, status.IsExtendedKey);
+        if (status.WasKeyDown)
+        {
+            return _applicationKeysDown.Contains(identity);
+        }
+        _applicationKeysDown.Remove(identity);
+        var handled = match.Value.Owner == ShortcutOwner.MainWindow
+            ? HandleMainWindowShortcut(match.Value)
+            : target.HandleShortcut(match.Value, repeat: false);
+        if (handled)
+        {
+            _applicationKeysDown.Add(identity);
+        }
+        return handled;
+    }
+
+    private bool HandleMainWindowShortcut(ShortcutMatch match)
+    {
+        var entry = Nav.SelectedItem is NavigationViewItem { Tag: WorkspaceEntry selected }
+            ? selected
+            : _visibleWorkspace is null
+                ? null
+                : _workspaces.Values.FirstOrDefault(candidate =>
+                    ReferenceEquals(candidate.View, _visibleWorkspace));
+        switch (match.Action)
+        {
+            case ShortcutAction.FocusWorkspaceSearch:
+                Nav.IsPaneOpen = true;
+                NavSearch.Focus(FocusState.Keyboard);
+                return true;
+            case ShortcutAction.OpenSettings:
+                Nav.SelectedItem = Nav.SettingsItem;
+                return true;
+            case ShortcutAction.NewWorkspace:
+                CreateWorkspace();
+                return true;
+            case ShortcutAction.PreviousWorkspace:
+                return SelectWorkspaceOffset(-1);
+            case ShortcutAction.NextWorkspace:
+                return SelectWorkspaceOffset(1);
+            case ShortcutAction.SelectWorkspace:
+                return SelectWorkspaceIndex(match.Index);
+            case ShortcutAction.MoveWorkspaceUp when entry is not null:
+                MoveWorkspace(entry, -1);
+                return true;
+            case ShortcutAction.MoveWorkspaceDown when entry is not null:
+                MoveWorkspace(entry, 1);
+                return true;
+            case ShortcutAction.RenameWorkspace when entry is not null:
+                _ = RenameWorkspaceAsync(entry);
+                return true;
+            case ShortcutAction.CloseWorkspace when entry is not null:
+                CloseWorkspace(entry);
+                return true;
+            default:
+                return false;
+        }
     }
 
     private IntPtr HandleLowLevelMouse(
@@ -240,6 +355,7 @@ public sealed partial class MainWindow : Window
 
         _workspacePointerDown = false;
         _inputBridgeTimer.Stop();
+        ClearBridgeCharacterKey();
         _workspaceInputBridgeActive = false;
         _nativePaneInputTarget = null;
     }
@@ -270,6 +386,7 @@ public sealed partial class MainWindow : Window
 
         EnsureInputSiteSubclass();
         _workspacePointerDown = false;
+        ClearBridgeCharacterKey();
         _workspaceInputTarget = view;
         _workspaceInputBridgeActive = true;
         _nativePaneInputTarget = view.SelectedTerminal;
@@ -315,6 +432,7 @@ public sealed partial class MainWindow : Window
     {
         EnsureInputSiteSubclass();
         _inputBridgeTimer.Stop();
+        ClearBridgeCharacterKey();
         _nativePaneInputTarget = null;
         _workspacePointerDown = true;
         _workspaceInputTarget = entry.View;
@@ -480,6 +598,7 @@ public sealed partial class MainWindow : Window
         if (e.WindowActivationState == WindowActivationState.Deactivated)
         {
             _windowActivated = false;
+            ClearBridgeCharacterKey();
             RemoveMouseHook();
             return;
         }
@@ -504,6 +623,12 @@ public sealed partial class MainWindow : Window
         }
     }
 
+    private void ClearBridgeCharacterKey()
+    {
+        _bridgeCharacterKey = null;
+        _applicationKeysDown.Clear();
+    }
+
     private void RestartInputBridgeTimer()
     {
         _inputBridgeDeadline = Environment.TickCount64
@@ -521,6 +646,7 @@ public sealed partial class MainWindow : Window
         }
 
         _inputBridgeTimer.Stop();
+        ClearBridgeCharacterKey();
         _nativePaneInputTarget = null;
         if (!_closed
             && !_workspacePointerDown
@@ -704,6 +830,7 @@ public sealed partial class MainWindow : Window
         MuxSnapshot snapshot)
     {
         var view = new WorkspaceView(_mux, workspace);
+        view.MainWindowShortcutRequested += match => HandleMainWindowShortcut(match);
         view.Render(snapshot);
         view.SetHostActive(false);
         view.Loaded += (_, _) =>
@@ -831,7 +958,9 @@ public sealed partial class MainWindow : Window
                 : 0;
     }
 
-    private void OnAddWorkspace(object sender, RoutedEventArgs args)
+    private void OnAddWorkspace(object sender, RoutedEventArgs args) => CreateWorkspace();
+
+    private void CreateWorkspace()
     {
         var workspace = _mux.CreateWorkspace(NextWorkspaceTitle());
         if (!_mux.CreateTerminal(workspace.PublicId))
@@ -843,6 +972,30 @@ public sealed partial class MainWindow : Window
         var entry = AddWorkspace(workspace, _mux.Snapshot());
         Nav.SelectedItem = entry.Item;
         ShowWorkspace(entry);
+    }
+
+    private bool SelectWorkspaceOffset(int delta)
+    {
+        var ordered = _mux.Workspaces();
+        var current = ordered.ToList().FindIndex(workspace => workspace.Active);
+        if (ordered.Count == 0 || current < 0)
+        {
+            return false;
+        }
+        return SelectWorkspaceIndex((current + delta + ordered.Count) % ordered.Count);
+    }
+
+    private bool SelectWorkspaceIndex(int index)
+    {
+        var ordered = _mux.Workspaces();
+        if (index < 0 || index >= ordered.Count
+            || !_workspaces.TryGetValue(ordered[index].PublicId, out var entry))
+        {
+            return false;
+        }
+        Nav.SelectedItem = entry.Item;
+        ShowWorkspace(entry);
+        return true;
     }
 
     private void OnCloseWorkspace(object sender, RoutedEventArgs args)
@@ -870,12 +1023,20 @@ public sealed partial class MainWindow : Window
             CloseButtonText = Loc.S("Action_Cancel"),
             DefaultButton = ContentDialogButton.Primary,
         };
-        if (await dialog.ShowAsync() != ContentDialogResult.Primary
-            || !_mux.RenameWorkspace(entry.Workspace.PublicId, name.Text))
+        _dialogOpen = true;
+        try
         {
-            return;
+            if (await dialog.ShowAsync() != ContentDialogResult.Primary
+                || !_mux.RenameWorkspace(entry.Workspace.PublicId, name.Text))
+            {
+                return;
+            }
+            SyncWorkspaceNavigation();
         }
-        SyncWorkspaceNavigation();
+        finally
+        {
+            _dialogOpen = false;
+        }
     }
 
     private void MoveWorkspace(WorkspaceEntry entry, int delta)
@@ -918,6 +1079,7 @@ public sealed partial class MainWindow : Window
             }
             if (ReferenceEquals(_workspaceInputTarget, stale.View))
             {
+                ClearBridgeCharacterKey();
                 _workspaceInputTarget = null;
                 _workspaceInputBridgeActive = false;
                 _nativePaneInputTarget = null;
@@ -953,6 +1115,7 @@ public sealed partial class MainWindow : Window
         if (latest.Count == 0)
         {
             _inputBridgeTimer.Stop();
+            ClearBridgeCharacterKey();
             _visibleWorkspace = null;
             _workspaceInputTarget = null;
             _workspaceInputBridgeActive = false;
@@ -1007,6 +1170,7 @@ public sealed partial class MainWindow : Window
         if (ReferenceEquals(_workspaceInputTarget, entry.View))
         {
             _inputBridgeTimer.Stop();
+            ClearBridgeCharacterKey();
             _workspaceInputTarget = null;
             _workspaceInputBridgeActive = false;
             _nativePaneInputTarget = null;
@@ -1038,6 +1202,7 @@ public sealed partial class MainWindow : Window
         if (args.IsSettingsSelected)
         {
             _inputBridgeTimer.Stop();
+            ClearBridgeCharacterKey();
             _workspaceInputTarget = null;
             _workspaceInputBridgeActive = false;
             _nativePaneInputTarget = null;
@@ -1101,11 +1266,45 @@ public sealed partial class MainWindow : Window
             : null;
     }
 
-    private void OnInputPreviewKeyDown(object sender, KeyRoutedEventArgs args) =>
+    private void OnInputPreviewKeyDown(object sender, KeyRoutedEventArgs args)
+    {
+        if (IsTextEntry(args.OriginalSource as DependencyObject))
+        {
+            return;
+        }
+        if (_visibleWorkspace is { } target
+            && AcceptsApplicationInput(target)
+            && TryHandleShortcut(target, args.Key, args.KeyStatus, out _))
+        {
+            args.Handled = true;
+            return;
+        }
         WorkspaceInputTargetFor(args.OriginalSource as DependencyObject)?.ForwardKeyDown(args);
+    }
 
-    private void OnInputKeyUp(object sender, KeyRoutedEventArgs args) =>
+    private void OnInputKeyUp(object sender, KeyRoutedEventArgs args)
+    {
+        var identity = (args.Key, args.KeyStatus.ScanCode, args.KeyStatus.IsExtendedKey);
+        if (_applicationKeysDown.Remove(identity))
+        {
+            args.Handled = true;
+            return;
+        }
         WorkspaceInputTargetFor(args.OriginalSource as DependencyObject)?.ForwardKeyUp(args);
+    }
+
+    private static bool IsTextEntry(DependencyObject? source)
+    {
+        while (source is not null)
+        {
+            if (source is TextBox or AutoSuggestBox)
+            {
+                return true;
+            }
+            source = VisualTreeHelper.GetParent(source);
+        }
+        return false;
+    }
 
     private void OnInputCharacterReceived(
         UIElement sender,
@@ -1151,6 +1350,7 @@ public sealed partial class MainWindow : Window
 
     private void ShowWorkspace(WorkspaceEntry entry)
     {
+        ClearBridgeCharacterKey();
         _nativePaneInputTarget = null;
         if (!_mux.SelectWorkspace(entry.Workspace.PublicId))
         {
@@ -1254,6 +1454,7 @@ public sealed partial class MainWindow : Window
         _windowHandle = IntPtr.Zero;
         NavSearch.TextChanged -= OnNavSearchChanged;
         _inputBridgeTimer.Stop();
+        ClearBridgeCharacterKey();
         _inputBridgeTimer.Tick -= OnInputBridgeTimerTick;
         _topologyTimer.Stop();
         _topologyTimer.Tick -= OnTopologyTick;
@@ -1263,6 +1464,7 @@ public sealed partial class MainWindow : Window
             entry.View.Dispose();
         }
         _visibleWorkspace = null;
+        ClearBridgeCharacterKey();
         _workspaceInputTarget = null;
         _workspaceInputBridgeActive = false;
         _nativePaneInputTarget = null;

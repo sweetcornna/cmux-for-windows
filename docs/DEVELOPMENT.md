@@ -135,6 +135,12 @@ cargo build --manifest-path .\cmux-tui\Cargo.toml `
   --locked
 
 cargo test --manifest-path .\cmux-tui\Cargo.toml `
+  -p ghostty-vt --lib `
+  --target x86_64-pc-windows-gnu `
+  --locked `
+  key::tests::chord_parser_encodes_common_keys
+
+cargo test --manifest-path .\cmux-tui\Cargo.toml `
   -p cmux-tui-core --lib `
   --target x86_64-pc-windows-gnu `
   --locked `
@@ -146,6 +152,8 @@ cargo test --manifest-path .\cmux-tui\Cargo.toml `
   --locked `
   persistent_gui_restart_restores_workspaces_with_fresh_default_shells
 
+dotnet run --project .\windows\CmuxGui.ShortcutTests\CmuxGui.ShortcutTests.csproj -c Release
+
 dotnet build .\windows\CmuxGui\CmuxGui.csproj -c Debug -r win-x64
 ```
 
@@ -153,13 +161,13 @@ The full inherited Rust test suite is not a supported Windows gate. Some retaine
 
 For GUI changes, manually verify:
 
-1. Create, rename, reorder, switch, and close workspaces. Switch repeatedly with the mouse and keyboard, and confirm the selected workspace terminal accepts input immediately without an extra click.
-2. Create, rename, switch, and close screens; confirm each screen exposes its own pane topology.
-3. Split panes horizontally and vertically, drag split and viewport dividers, repeatedly click each terminal body and confirm immediate input reaches only that pane, move focus by mouse and `Ctrl+Alt+Arrow`, toggle zoom with `Ctrl+Shift+Enter`, rename panes, and close panes. Repeat split → zoom → unzoom → close cycles and confirm terminal glyphs retain their normal aspect ratio and repaint at the final pane size.
+1. Create, rename, reorder, switch, and close workspaces. Exercise `Ctrl+Shift+N`, `Ctrl+Shift+PageUp/PageDown`, `Ctrl+Shift+1` through `Ctrl+Shift+0`, `Ctrl+Alt+Shift+Up/Down`, `Ctrl+Alt+Shift+F2`, and `Ctrl+Alt+Shift+W`; confirm the selected workspace terminal accepts input immediately without an extra click.
+2. Create, rename, switch, and close screens with `Ctrl+Alt+N`, `Ctrl+Alt+PageUp/PageDown`, `Ctrl+Alt+1` through `Ctrl+Alt+0`, `Ctrl+Alt+F2`, and `Ctrl+Alt+W`; confirm each screen exposes its own pane topology.
+3. Split panes with `Ctrl+Shift+\\` and `Ctrl+Shift+-`, drag split and viewport dividers, repeatedly click each terminal body and confirm immediate input reaches only that pane, move focus by mouse and `Ctrl+Alt+Arrow`, toggle zoom with `Ctrl+Shift+Enter`, rename with `Ctrl+Shift+F2`, and close with `Ctrl+Shift+W`. Confirm these application shortcuts work immediately after pane, tab, and workspace switches and are not sent to the shell. Hold each destructive shortcut and confirm it executes only once. Repeat split → zoom → unzoom → close cycles and confirm terminal glyphs retain their normal aspect ratio and repaint at the final pane size.
 4. Run a complex TUI such as Claude Code and verify box drawing, inverse-video controls, bold/italic text, CJK, emoji, combining characters, and one- and two-cell glyphs stay on the terminal grid. Exercise block, bar, underline, hollow, steady, and blinking cursors; a block cursor over text must keep the glyph readable. Move the window between displays at 100%, 150%, and 200% scaling and confirm glyphs, pointer hit testing, and ConPTY rows/columns remain aligned.
-5. Create, rename, reorder, move between panes, focus, and close terminal and browser tabs. Switch terminal tabs repeatedly, wait across a topology-polling interval, and confirm the selected terminal still accepts keyboard input without an extra click.
-6. Exercise press, repeat, and release handling on the main keyboard and numpad; type into PowerShell and `cmd.exe`, use local selection and copy, verify selection foreground/background colors, verify soft-wrapped lines do not acquire hard newlines, paste with and without bracketed-paste mode, and confirm Shift forces local selection when an application has terminal mouse reporting enabled.
-7. In a browser tab, navigate from the address bar, follow a redirect, verify the document title reaches the tab, then use back, forward, and reload. Confirm an unavailable WebView2 Runtime produces a visible browser error rather than closing the workspace.
+5. Create, rename, reorder, move between panes, focus, and close terminal and browser tabs. Exercise `Ctrl+T`, `Ctrl+Shift+T`, `Ctrl+Tab`, `Ctrl+Shift+Tab`, `Ctrl+1` through `Ctrl+0`, `Ctrl+Alt+Shift+Left/Right`, `Ctrl+Alt+Shift+1` through `Ctrl+Alt+Shift+0`, `Ctrl+F2`, and `Ctrl+W`. Switch terminal tabs repeatedly, wait across a topology-polling interval, and confirm the selected terminal still accepts keyboard input without an extra click.
+6. Exercise press, repeat, and release handling on the main keyboard and numpad; verify terminal input using left and right `Ctrl`, `Alt`, `Shift`, and Windows/Super, CapsLock/NumLock state, function and navigation keys, PrintScreen, ScrollLock, Pause, the menu key, the international backslash key, and OEM punctuation such as `Ctrl+[`, `Ctrl+]`, `Ctrl+/`, and `Ctrl+\\`. Verify Right Alt/AltGr still produces layout text instead of being encoded as `Ctrl+Alt`; test `Ctrl+Shift+C`, `Ctrl+Insert`, `Ctrl+Shift+V`, `Shift+Insert`, and `Ctrl+Shift+A`; type into PowerShell and `cmd.exe`, verify selection colors and soft wraps, paste with and without bracketed-paste mode, and confirm Shift forces local selection when terminal mouse reporting is enabled.
+7. In browser content and the address bar, exercise `Alt+Left/Right`, `Ctrl+R`, `F5`, `Ctrl+L`, and the workspace/screen/pane/tab shortcuts. Navigate through a redirect and verify the document title reaches the tab. Confirm typing and editing remain local in the address bar, workspace search, Settings, and every modal dialog, and that an unavailable WebView2 Runtime produces a visible browser error rather than closing the workspace.
 8. Restart the main application and confirm workspace, screen, pane, tab, layout, focus, names, and browser URLs are restored with fresh shells and fresh WebView controls; terminal processes, output, scrollback, commands, working directories, page state, and browser history must not be restored.
 9. Launch a second new-workspace activation and confirm it is forwarded to the existing main window. Launch a new-window activation and confirm it uses an independent transient mux whose topology is not restored later.
 10. Change appearance, theme, font, language, background, opacity, and Explorer-integration settings. Confirm the settings surface does not reveal terminal output underneath it. Confirm terminal foreground/background overrides and full theme palettes update existing visible and hidden terminals, then create another terminal and confirm it inherits the same colors. Select Follow config or reset the overrides and confirm existing terminals immediately return to the Ghostty configuration baseline; also confirm the accent picker immediately updates the new-workspace action, settings sliders, and project link.

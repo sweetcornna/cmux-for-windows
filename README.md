@@ -40,6 +40,38 @@ The Windows GUI and local multiplexer are usable, but this fork does not provide
 
 Only 64-bit Windows builds using Rust's `x86_64-pc-windows-gnu` target are supported. There is no MSVC-ABI engine build.
 
+## Keyboard shortcuts
+
+| Scope | Shortcut | Action |
+| --- | --- | --- |
+| App | `Ctrl+Shift+K` / `Ctrl+,` | Focus workspace search / open Settings |
+| Workspace | `Ctrl+Shift+N` | Create a workspace |
+| Workspace | `Ctrl+Shift+PageUp` / `Ctrl+Shift+PageDown` | Select the previous / next workspace |
+| Workspace | `Ctrl+Shift+1` … `Ctrl+Shift+9`, `Ctrl+Shift+0` | Select workspace 1 … 10 |
+| Workspace | `Ctrl+Alt+Shift+Up` / `Ctrl+Alt+Shift+Down` | Move the workspace up / down |
+| Workspace | `Ctrl+Alt+Shift+F2` / `Ctrl+Alt+Shift+W` | Rename / close the workspace |
+| Screen | `Ctrl+Alt+N` | Create a screen |
+| Screen | `Ctrl+Alt+PageUp` / `Ctrl+Alt+PageDown` | Select the previous / next screen |
+| Screen | `Ctrl+Alt+1` … `Ctrl+Alt+9`, `Ctrl+Alt+0` | Select screen 1 … 10 |
+| Screen | `Ctrl+Alt+F2` / `Ctrl+Alt+W` | Rename / close the screen |
+| Pane | `Ctrl+Shift+\` / `Ctrl+Shift+-` | Split right / down |
+| Pane | `Ctrl+Alt+Arrow` | Focus the pane in the arrow direction |
+| Pane | `Ctrl+Shift+Enter` | Zoom or restore the active pane |
+| Pane | `Ctrl+Shift+F2` / `Ctrl+Shift+W` | Rename / close the pane |
+| Tab | `Ctrl+T` / `Ctrl+Shift+T` | Create a terminal / browser tab |
+| Tab | `Ctrl+Tab` / `Ctrl+Shift+Tab` | Select the next / previous tab |
+| Tab | `Ctrl+1` … `Ctrl+9`, `Ctrl+0` | Select tab 1 … 10 |
+| Tab | `Ctrl+Alt+Shift+Left` / `Ctrl+Alt+Shift+Right` | Move the tab left / right |
+| Tab | `Ctrl+Alt+Shift+1` … `Ctrl+Alt+Shift+9`, `Ctrl+Alt+Shift+0` | Move the tab to pane 1 … 10 |
+| Tab | `Ctrl+F2` / `Ctrl+W` | Rename / close the tab |
+| Browser | `Alt+Left` / `Alt+Right` | Go back / forward |
+| Browser | `Ctrl+R` or `F5` / `Ctrl+L` | Reload / focus the address bar |
+| Terminal | `Ctrl+Shift+C` or `Ctrl+Insert` | Copy the selection |
+| Terminal | `Ctrl+Shift+V` or `Shift+Insert` | Paste |
+| Terminal | `Ctrl+Shift+A` | Select all |
+
+Terminal applications continue to receive `Ctrl`, `Alt`, `Shift`, Windows/Super, function, navigation, numpad, system, international, and punctuation keys that do not exactly match an application shortcut. Right Alt/AltGr remains available for layout text input. Application shortcuts work from terminal and WebView content, while text fields, Settings, and modal dialogs retain their own input.
+
 ## Install
 
 1. Open the [latest release](https://github.com/sweetcornna/cmux-for-windows/releases/latest).

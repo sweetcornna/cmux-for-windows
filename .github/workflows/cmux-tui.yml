@@ -51,6 +51,9 @@ jobs:
       - name: Build Windows engine and TUI
         run: cargo build --manifest-path cmux-tui/Cargo.toml -p cmux-tui -p cmux-ffi --target x86_64-pc-windows-gnu --locked
 
+      - name: Test terminal key encoding
+        run: cargo test --manifest-path cmux-tui/Cargo.toml -p ghostty-vt --lib --target x86_64-pc-windows-gnu --locked key::tests::chord_parser_encodes_common_keys
+
       - name: Test Windows workspace persistence
         shell: bash
         run: |
@@ -64,6 +67,9 @@ jobs:
           set -o pipefail
           cargo test --manifest-path cmux-tui/Cargo.toml -p cmux-tui-core --lib --target x86_64-pc-windows-gnu --locked persistent_gui_restart_restores_workspaces_with_fresh_default_shells 2>&1 | tee restart-test.log
           grep -qE 'test result: ok\. [1-9][0-9]* passed' restart-test.log
+
+      - name: Test Windows shortcut catalog
+        run: dotnet run --project windows/CmuxGui.ShortcutTests/CmuxGui.ShortcutTests.csproj -c Release
 
       - name: Build native WinUI GUI
         run: dotnet build windows/CmuxGui/CmuxGui.csproj -c Debug -r win-x64
