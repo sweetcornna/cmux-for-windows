@@ -216,7 +216,7 @@ dependencies = [
 
 [[package]]
 name = "cmux-tui"
-version = "0.3.5"
+version = "0.3.6"
 dependencies = [
  "anyhow",
  "base64",
