@@ -188,6 +188,12 @@ internal sealed class MuxRuntime : IDisposable
         return CmuxNative.MuxTabOpen(_handle, bytes, (nuint)bytes.Length, cols, rows);
     }
 
+    public bool SetCellPixelSize(ushort widthPx, ushort heightPx) =>
+        Check(CmuxNative.MuxSetCellPixelSize(_handle, widthPx, heightPx), "terminal cell pixels");
+
+    public bool TryGetPresentation(out CmuxNative.Presentation presentation) =>
+        CmuxNative.MuxPresentation(_handle, out presentation) == 0;
+
     public bool ApplyTerminalAppearance()
     {
         var settings = AppSettings.Current;

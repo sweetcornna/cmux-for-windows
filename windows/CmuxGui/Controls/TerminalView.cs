@@ -49,18 +49,22 @@ public sealed partial class TerminalView : UserControl, IDisposable
     private CmuxNative.Frame _frame;
     private int _cellCount;
 
-    private CanvasTextFormat _format = null!;
-    // Bold and italic need their own formats; a single one renders every
-    // attribute as regular text, which flattens any TUI that uses emphasis.
-    private readonly CanvasTextFormat[] _formats = new CanvasTextFormat[4];
+    private CanvasTextFormat? _format;
+    private readonly CanvasTextFormat?[] _formats = new CanvasTextFormat?[4];
+    private readonly Dictionary<GlyphLayoutKey, CanvasTextLayout> _glyphLayouts = [];
+    private readonly Queue<GlyphLayoutKey> _glyphLayoutOrder = [];
     private string _status = string.Empty;
     // Used until the first snapshot arrives, so the very first paint already
     // shows the Ghostty background instead of flashing a default.
     private uint _themeBackground = CmuxNative.NoColor;
     private uint _themeForeground = CmuxNative.NoColor;
     private uint _selectionBackground = CmuxNative.NoColor;
+    private uint _selectionForeground = CmuxNative.NoColor;
     private float _cellWidth = 8;
     private float _cellHeight = 16;
+    private bool _hasBlinkingText;
+    private bool _blinkVisible = true;
+    private const int GlyphLayoutCapacity = 4096;
     // The starting cell size above is a placeholder. Sizing the PTY from it
     // would start the shell on a grid the font does not actually produce, and
     // text it has already emitted keeps that wrong wrapping forever.
@@ -127,7 +131,17 @@ public sealed partial class TerminalView : UserControl, IDisposable
         // The engine has no GUI wakeup yet, so poll near display rate. Redraws
         // are skipped unless the snapshot reports damage.
         _timer.Interval = TimeSpan.FromMilliseconds(16);
-        _timer.Tick += (_, _) => Poll();
+        _timer.Tick += (_, _) =>
+        {
+            var blinkVisible = (Environment.TickCount64 / 500) % 2 == 0;
+            if (blinkVisible != _blinkVisible
+                && (_hasBlinkingText || (_frame.CursorVisible != 0 && _frame.CursorBlink != 0)))
+            {
+                _blinkVisible = blinkVisible;
+                _canvas.Invalidate();
+            }
+            Poll();
+        };
 
         // A click has to move focus here or every keystroke goes to whatever
         // the shell focused first (the search box). CanvasControl can mark
@@ -192,9 +206,7 @@ public sealed partial class TerminalView : UserControl, IDisposable
 
     private void OnCreateResources(CanvasControl sender, Microsoft.Graphics.Canvas.UI.CanvasCreateResourcesEventArgs args)
     {
-        // Adopt the user's Ghostty font and colours. The engine already resolves
-        // cell colours through the theme palette; what is needed here is the
-        // face to shape with and the surface colour behind the grid.
+        DisposeTextResources();
         CmuxNative.ThemeLoad(out var theme);
         var family = CmuxNative.FontFamilyOf(theme);
         Diag.Log($"CreateResources theme loaded={theme.Loaded} font='{family}' size={theme.FontSize}");
@@ -202,6 +214,7 @@ public sealed partial class TerminalView : UserControl, IDisposable
         _themeBackground = theme.Background;
         _themeForeground = theme.Foreground;
         _selectionBackground = theme.SelectionBackground;
+        _selectionForeground = theme.SelectionForeground;
 
         _format = new CanvasTextFormat
         {
@@ -217,6 +230,8 @@ public sealed partial class TerminalView : UserControl, IDisposable
                 FontFamily = _format.FontFamily,
                 FontSize = _format.FontSize,
                 WordWrapping = CanvasWordWrapping.NoWrap,
+                VerticalAlignment = CanvasVerticalAlignment.Center,
+                Options = CanvasDrawTextOptions.Clip | CanvasDrawTextOptions.EnableColorFont,
                 FontWeight = (i & 1) != 0
                     ? Microsoft.UI.Text.FontWeights.Bold
                     : Microsoft.UI.Text.FontWeights.Normal,
@@ -226,11 +241,21 @@ public sealed partial class TerminalView : UserControl, IDisposable
             };
         }
 
-        // Measure rather than assume: the resolved face decides the cell box.
         using var layout = new CanvasTextLayout(sender, "MMMMMMMMMM", _format, 0, 0);
-        _cellWidth = (float)layout.LayoutBounds.Width / 10f;
-        _cellHeight = (float)layout.LayoutBounds.Height;
+        var measuredWidth = (float)layout.LayoutBoundsIncludingTrailingWhitespace.Width / 10f;
+        var measuredHeight = layout.LineMetrics.Length == 0
+            ? (float)layout.LayoutBounds.Height
+            : layout.LineMetrics[0].Height;
+        var scale = sender.Dpi / 96f;
+        var cellWidthPx = (ushort)Math.Clamp((int)Math.Round(measuredWidth * scale), 1, ushort.MaxValue);
+        var cellHeightPx = (ushort)Math.Clamp((int)Math.Round(measuredHeight * scale), 1, ushort.MaxValue);
+        _cellWidth = cellWidthPx / scale;
+        _cellHeight = cellHeightPx / scale;
         _metricsReady = true;
+        if (!_mux.SetCellPixelSize(cellWidthPx, cellHeightPx))
+        {
+            Diag.Log($"terminal cell pixel update failed: {cellWidthPx}x{cellHeightPx}");
+        }
         SyncGrid();
     }
 
@@ -467,6 +492,20 @@ public sealed partial class TerminalView : UserControl, IDisposable
         _frame = frame;
         if (forceInvalidate || frame.Dirty != 0)
         {
+            if (_mux.TryGetPresentation(out var presentation))
+            {
+                _selectionBackground = presentation.SelectionBackground;
+                _selectionForeground = presentation.SelectionForeground;
+            }
+            _hasBlinkingText = false;
+            for (var index = 0; index < _cellCount; index++)
+            {
+                if (Has(_cells[index].Attrs, AttrBlink))
+                {
+                    _hasBlinkingText = true;
+                    break;
+                }
+            }
             _canvas.Invalidate();
         }
     }
@@ -474,65 +513,56 @@ public sealed partial class TerminalView : UserControl, IDisposable
     private void OnDraw(CanvasControl sender, CanvasDrawEventArgs args)
     {
         var ds = args.DrawingSession;
-        // Before the first snapshot the frame carries no colours yet.
         var background = _frame.Cols == 0 ? _themeBackground : _frame.DefaultBg;
         var opaque = FromPacked(background, Colors.Black);
         var opacity = AppSettings.Current.TerminalOpacity;
-        // Blending every frame against the backdrop is what makes the window
-        // shimmer, so only do it when transparency was actually asked for.
         ds.Clear(opacity >= 0.999
             ? opaque
             : Color.FromArgb((byte)Math.Clamp(opacity * 255.0, 0, 255), opaque.R, opaque.G, opaque.B));
 
-        if (_cellCount == 0 || _frame.Cols == 0)
+        if (_cellCount == 0 || _frame.Cols == 0 || _format is null)
         {
-            var why = string.IsNullOrEmpty(_status)
-                ? $"waiting for first frame (session={(_session == IntPtr.Zero ? "null" : "ok")}, "
-                  + $"grid={_cols}x{_rows}, cell={_cellWidth:F1}x{_cellHeight:F1}, "
-                  + $"size={ActualWidth:F0}x{ActualHeight:F0})"
-                : _status;
-            ds.DrawText(why, 12, 12, Colors.OrangeRed, _format);
+            if (_format is not null)
+            {
+                var why = string.IsNullOrEmpty(_status)
+                    ? $"waiting for first frame (session={(_session == IntPtr.Zero ? "null" : "ok")}, "
+                      + $"grid={_cols}x{_rows}, cell={_cellWidth:F1}x{_cellHeight:F1}, "
+                      + $"size={ActualWidth:F0}x{ActualHeight:F0})"
+                    : _status;
+                ds.DrawText(why, 12, 12, Colors.OrangeRed, _format);
+            }
             return;
         }
 
         var defaultFg = FromPacked(_frame.DefaultFg, FromPacked(_themeForeground, Colors.White));
+        var defaultBg = FromPacked(_frame.DefaultBg, opaque);
+        var selection = SelectionRange();
+        var cursorSpan = CursorSpan();
 
         for (var row = 0; row < _frame.Rows; row++)
         {
             var y = row * _cellHeight;
-
-            // Backgrounds first, coalescing equal runs into one rectangle.
             var col = 0;
             while (col < _frame.Cols)
             {
-                var index = row * _frame.Cols + col;
-                if (index >= _cellCount)
-                {
-                    break;
-                }
-                var bg = EffectiveBg(_cells[index]);
-                if (bg == CmuxNative.NoColor)
-                {
-                    col++;
-                    continue;
-                }
+                var visual = VisualAt(col, row, defaultFg, defaultBg, selection, cursorSpan);
                 var span = 1;
                 while (col + span < _frame.Cols
-                       && row * _frame.Cols + col + span < _cellCount
-                       && EffectiveBg(_cells[row * _frame.Cols + col + span]) == bg)
+                       && VisualAt(col + span, row, defaultFg, defaultBg, selection, cursorSpan).Background
+                           == visual.Background)
                 {
                     span++;
                 }
-                ds.FillRectangle(
-                    new Rect(col * _cellWidth, y, span * _cellWidth, _cellHeight),
-                    FromPacked(bg, Colors.Transparent));
+                if (visual.Background != defaultBg)
+                {
+                    ds.FillRectangle(
+                        new Rect(col * _cellWidth, y, span * _cellWidth, _cellHeight),
+                        visual.Background);
+                }
                 col += span;
             }
 
-            // Then glyphs, one draw per contiguous same-colour run.
-            col = 0;
-            var run = new StringBuilder();
-            while (col < _frame.Cols)
+            for (col = 0; col < _frame.Cols; col++)
             {
                 var index = row * _frame.Cols + col;
                 if (index >= _cellCount)
@@ -540,103 +570,172 @@ public sealed partial class TerminalView : UserControl, IDisposable
                     break;
                 }
                 var cell = _cells[index];
-                if (cell.Ch == 0 || cell.Width == 0 || Has(cell.Attrs, AttrInvisible))
-                {
-                    col++;
-                    continue;
-                }
-
-                var fg = cell.Fg;
-                var style = StyleOf(cell.Attrs);
-                var start = col;
-                run.Clear();
-                while (col < _frame.Cols)
-                {
-                    var i = row * _frame.Cols + col;
-                    if (i >= _cellCount)
-                    {
-                        break;
-                    }
-                    var c = _cells[i];
-                    if (c.Width == 0)
-                    {
-                        col++;
-                        continue;
-                    }
-                    // A run must share colour *and* style, or bold and dim text
-                    // would inherit whatever the run happened to start with.
-                    if (c.Ch == 0 || c.Fg != fg || StyleOf(c.Attrs) != style
-                        || Has(c.Attrs, AttrInvisible))
-                    {
-                        break;
-                    }
-                    var text = CmuxNative.TextOf(c);
-                    run.Append(text.Length == 0 ? char.ConvertFromUtf32((int)c.Ch) : text);
-                    col++;
-                }
-
-                if (run.Length > 0)
-                {
-                    var colour = Has(style, AttrInverse)
-                        ? FromPacked(_frame.DefaultBg, Colors.Black)
-                        : (fg == CmuxNative.NoColor ? defaultFg : FromPacked(fg, defaultFg));
-                    if (Has(style, AttrFaint))
-                    {
-                        colour = Dim(colour);
-                    }
-                    ds.DrawText(run.ToString(), start * _cellWidth, y, colour,
-                                _formats[StyleIndex(style)]);
-                }
-            }
-
-            for (col = 0; col < _frame.Cols; col++)
-            {
-                var index = row * _frame.Cols + col;
-                if (index >= _cellCount || _cells[index].Width == 0)
+                if (cell.Width == 0)
                 {
                     continue;
                 }
-                DrawDecorations(ds, _cells[index], col * _cellWidth, y, defaultFg);
+                var visual = VisualAt(col, row, defaultFg, defaultBg, selection, cursorSpan);
+                if (!visual.GlyphVisible)
+                {
+                    continue;
+                }
+                if (cell.Ch != 0)
+                {
+                    var text = CmuxNative.TextOf(cell);
+                    if (text.Length == 0)
+                    {
+                        text = char.ConvertFromUtf32((int)cell.Ch);
+                    }
+                    var layout = GlyphLayout(sender, text, StyleIndex(cell.Attrs), cell.Width);
+                    ds.DrawTextLayout(layout, col * _cellWidth, y, visual.Foreground);
+                }
+                DrawDecorations(ds, cell, col * _cellWidth, y, visual.Foreground);
             }
         }
 
-        // Selection sits above the cells and below the cursor, tinted rather than
-        // opaque so the text under it stays readable.
-        if (SelectionRange() is { } sel)
+        DrawNonBlockCursor(ds, defaultFg, cursorSpan);
+    }
+
+    private readonly record struct GlyphLayoutKey(string Text, int Style, byte Width);
+
+    private readonly record struct CellVisual(Color Foreground, Color Background, bool GlyphVisible);
+
+    private CanvasTextLayout GlyphLayout(CanvasControl sender, string text, int style, byte width)
+    {
+        var key = new GlyphLayoutKey(text, style, width);
+        if (_glyphLayouts.TryGetValue(key, out var cached))
         {
-            var selection = FromPacked(_selectionBackground, Color.FromArgb(255, 0x0A, 0x84, 0xFF));
-            var tint = Color.FromArgb(110, selection.R, selection.G, selection.B);
-            for (var row = sel.Start.Row; row <= sel.End.Row && row < _frame.Rows; row++)
-            {
-                var first = row == sel.Start.Row ? sel.Start.Col : 0;
-                var last = row == sel.End.Row ? sel.End.Col : _frame.Cols - 1;
-                ds.FillRectangle(
-                    new Rect(first * _cellWidth, row * _cellHeight,
-                             Math.Max(1, last - first + 1) * _cellWidth, _cellHeight),
-                    tint);
-            }
+            return cached;
         }
 
-        if (_frame.CursorVisible != 0)
+        var layout = new CanvasTextLayout(
+            sender,
+            text,
+            _formats[style]!,
+            _cellWidth * Math.Max(1, (int)width),
+            _cellHeight);
+        _glyphLayouts.Add(key, layout);
+        _glyphLayoutOrder.Enqueue(key);
+        while (_glyphLayouts.Count > GlyphLayoutCapacity && _glyphLayoutOrder.TryDequeue(out var oldest))
         {
-            var cursor = FromPacked(_frame.CursorColor, defaultFg);
-            var x = _frame.CursorCol * _cellWidth;
-            var y = _frame.CursorRow * _cellHeight;
-            switch (_frame.CursorShape)
+            if (_glyphLayouts.Remove(oldest, out var evicted))
             {
-                case 2:
-                    ds.FillRectangle(new Rect(x, y + _cellHeight - 2, _cellWidth, 2), cursor);
-                    break;
-                case 3:
-                    ds.FillRectangle(new Rect(x, y, 2, _cellHeight), cursor);
-                    break;
-                case 4:
-                    ds.DrawRectangle(new Rect(x, y, _cellWidth, _cellHeight), cursor, 1);
-                    break;
-                default:
-                    ds.FillRectangle(new Rect(x, y, _cellWidth, _cellHeight), cursor);
-                    break;
+                evicted.Dispose();
             }
+        }
+        return layout;
+    }
+
+    private CellVisual VisualAt(
+        int col,
+        int row,
+        Color defaultFg,
+        Color defaultBg,
+        ((int Col, int Row) Start, (int Col, int Row) End)? selection,
+        (int Col, int Row, int Width)? cursorSpan)
+    {
+        var index = row * _frame.Cols + col;
+        if (index < 0 || index >= _cellCount)
+        {
+            return new CellVisual(defaultFg, defaultBg, false);
+        }
+
+        var cell = _cells[index];
+        var foreground = FromPacked(cell.Fg, defaultFg);
+        var background = FromPacked(cell.Bg, defaultBg);
+        if (Has(cell.Attrs, AttrInverse))
+        {
+            (foreground, background) = (background, foreground);
+        }
+
+        var cellFirstCol = col;
+        var cellLastCol = col + Math.Max(1, (int)cell.Width) - 1;
+        if (cell.Width == 0 && col > 0)
+        {
+            var leadIndex = index - 1;
+            if (leadIndex >= 0 && _cells[leadIndex].Width == 2)
+            {
+                cellFirstCol--;
+            }
+        }
+        var selected = selection is { } range
+            && (row > range.Start.Row || (row == range.Start.Row && cellLastCol >= range.Start.Col))
+            && (row < range.End.Row || (row == range.End.Row && cellFirstCol <= range.End.Col));
+        if (selected)
+        {
+            background = FromPacked(_selectionBackground, defaultFg);
+            foreground = FromPacked(_selectionForeground, defaultBg);
+        }
+        if (Has(cell.Attrs, AttrFaint))
+        {
+            foreground = Blend(foreground, background, 0.55f);
+        }
+
+        var blockCursor = cursorSpan is { } cursor
+            && _frame.CursorShape == 1
+            && (_frame.CursorBlink == 0 || _blinkVisible)
+            && row == cursor.Row
+            && col >= cursor.Col
+            && col < cursor.Col + cursor.Width;
+        if (blockCursor)
+        {
+            background = FromPacked(_frame.CursorColor, defaultFg);
+            foreground = defaultBg;
+        }
+
+        var visible = !Has(cell.Attrs, AttrInvisible)
+            && (!Has(cell.Attrs, AttrBlink) || _blinkVisible);
+        return new CellVisual(foreground, background, visible);
+    }
+
+    private (int Col, int Row, int Width)? CursorSpan()
+    {
+        if (_frame.CursorVisible == 0
+            || _frame.CursorRow >= _frame.Rows
+            || _frame.CursorCol >= _frame.Cols)
+        {
+            return null;
+        }
+
+        var col = (int)_frame.CursorCol;
+        var row = (int)_frame.CursorRow;
+        var index = row * _frame.Cols + col;
+        if (index < _cellCount && _cells[index].Width == 0 && col > 0)
+        {
+            col--;
+            index--;
+        }
+        var width = index < _cellCount ? Math.Max(1, (int)_cells[index].Width) : 1;
+        return (col, row, width);
+    }
+
+    private void DrawNonBlockCursor(
+        CanvasDrawingSession drawing,
+        Color defaultForeground,
+        (int Col, int Row, int Width)? span)
+    {
+        if (span is not { } cursor
+            || _frame.CursorShape == 1
+            || (_frame.CursorBlink != 0 && !_blinkVisible))
+        {
+            return;
+        }
+
+        var color = FromPacked(_frame.CursorColor, defaultForeground);
+        var x = cursor.Col * _cellWidth;
+        var y = cursor.Row * _cellHeight;
+        var width = cursor.Width * _cellWidth;
+        switch (_frame.CursorShape)
+        {
+            case 2:
+                drawing.FillRectangle(new Rect(x, y + _cellHeight - 2, width, 2), color);
+                break;
+            case 3:
+                drawing.FillRectangle(new Rect(x, y, 2, _cellHeight), color);
+                break;
+            default:
+                drawing.DrawRectangle(new Rect(x, y, width, _cellHeight), color, 1);
+                break;
         }
     }
 
@@ -650,15 +749,12 @@ public sealed partial class TerminalView : UserControl, IDisposable
         in CmuxNative.Cell cell,
         float x,
         float y,
-        Color defaultForeground)
+        Color colour)
     {
         if (cell.Underline == 0 && !Has(cell.Attrs, AttrStrikethrough))
         {
             return;
         }
-        var colour = cell.Fg == CmuxNative.NoColor
-            ? defaultForeground
-            : FromPacked(cell.Fg, defaultForeground);
         var width = _cellWidth * Math.Max(1, (int)cell.Width);
         if (Has(cell.Attrs, AttrStrikethrough))
         {
@@ -712,6 +808,7 @@ public sealed partial class TerminalView : UserControl, IDisposable
     private const ushort AttrInverse = 0x0008;
     private const ushort AttrFaint = 0x0010;
     private const ushort AttrInvisible = 0x0020;
+    private const ushort AttrBlink = 0x0040;
 
     private static bool Has(ushort attrs, ushort bit) => (attrs & bit) != 0;
 
@@ -722,19 +819,12 @@ public sealed partial class TerminalView : UserControl, IDisposable
     private static int StyleIndex(ushort style) =>
         (Has(style, AttrBold) ? 1 : 0) | (Has(style, AttrItalic) ? 2 : 0);
 
-    /// <summary>Faint text is the same colour carried toward the background.</summary>
-    private static Color Dim(Color c) =>
-        Color.FromArgb(c.A, (byte)(c.R * 0.55), (byte)(c.G * 0.55), (byte)(c.B * 0.55));
-
-    /// <summary>Cell background, with inverse swapping the foreground in.</summary>
-    private uint EffectiveBg(in CmuxNative.Cell cell)
-    {
-        if (Has(cell.Attrs, AttrInverse))
-        {
-            return cell.Fg == CmuxNative.NoColor ? _frame.DefaultFg : cell.Fg;
-        }
-        return cell.Bg;
-    }
+    private static Color Blend(Color foreground, Color background, float amount) =>
+        Color.FromArgb(
+            foreground.A,
+            (byte)Math.Round(background.R + (foreground.R - background.R) * amount),
+            (byte)Math.Round(background.G + (foreground.G - background.G) * amount),
+            (byte)Math.Round(background.B + (foreground.B - background.B) * amount));
 
     internal void ForwardKeyDown(KeyRoutedEventArgs args) => OnKeyDown(this, args);
 
@@ -1020,6 +1110,23 @@ public sealed partial class TerminalView : UserControl, IDisposable
             (byte)(packed & 0xFF));
     }
 
+    private void DisposeTextResources()
+    {
+        foreach (var layout in _glyphLayouts.Values)
+        {
+            layout.Dispose();
+        }
+        _glyphLayouts.Clear();
+        _glyphLayoutOrder.Clear();
+        foreach (var format in _formats)
+        {
+            format?.Dispose();
+        }
+        Array.Clear(_formats);
+        _format?.Dispose();
+        _format = null;
+    }
+
     public void Dispose()
     {
         if (_disposed)
@@ -1035,6 +1142,7 @@ public sealed partial class TerminalView : UserControl, IDisposable
         _postArrangeRefreshPending = false;
         _canvas.SizeChanged -= OnCanvasSizeChanged;
         _timer.Stop();
+        DisposeTextResources();
         if (_session != IntPtr.Zero)
         {
             CmuxNative.SessionFree(_session);

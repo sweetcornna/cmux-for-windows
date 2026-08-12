@@ -72,6 +72,14 @@ pub struct CmuxFrame {
     pub cursor_color: u32,
 }
 
+/// Mux-resolved colors used for frontend-owned terminal composition.
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct CmuxPresentation {
+    pub selection_bg: u32,
+    pub selection_fg: u32,
+}
+
 /// Presentation settings read from the user's Ghostty config.
 ///
 /// The engine already resolves cell colors through the theme palette, so this
@@ -318,6 +326,33 @@ pub unsafe extern "C" fn cmux_mux_apply_theme_text(
     mux.clear_error();
     mux.mux.set_default_colors(default_colors_from_theme_text(text));
     0
+}
+
+/// Publish the native frontend's physical terminal cell size.
+///
+/// The mux applies the dimensions to live surfaces and uses them when creating
+/// future ConPTY sessions. Returns 0 only when every live surface converged.
+///
+/// # Safety
+/// `mux` must be live.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn cmux_mux_set_cell_pixel_size(
+    mux: *mut CmuxMux,
+    width_px: u16,
+    height_px: u16,
+) -> i32 {
+    if mux.is_null() || width_px == 0 || height_px == 0 {
+        return CMUX_ERR_NULL;
+    }
+    let mux = unsafe { &*mux };
+    let update = mux.mux.set_cell_pixel_size(width_px, height_px);
+    if update.failures.is_empty() {
+        0
+    } else {
+        let error =
+            format!("{} terminal surfaces rejected cell pixel geometry", update.failures.len());
+        mux.record_error(&error)
+    }
 }
 
 /// Execute one local `cmux.protocol/2` request exactly once.
@@ -1139,6 +1174,28 @@ pub unsafe extern "C" fn cmux_session_scroll_to_bottom(session: *mut CmuxSession
     }
 }
 
+/// Copy the mux-resolved colors used by frontend-owned selection composition.
+///
+/// # Safety
+/// `mux` must be live and `presentation` must be writable.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn cmux_mux_presentation(
+    mux: *mut CmuxMux,
+    presentation: *mut CmuxPresentation,
+) -> i32 {
+    if mux.is_null() || presentation.is_null() {
+        return CMUX_ERR_NULL;
+    }
+    let colors = unsafe { &*mux }.mux.default_colors();
+    unsafe {
+        *presentation = CmuxPresentation {
+            selection_bg: colors.selection_bg.map(pack).unwrap_or(CMUX_NO_COLOR),
+            selection_fg: colors.selection_fg.map(pack).unwrap_or(CMUX_NO_COLOR),
+        };
+    }
+    0
+}
+
 /// Copy the current grid into `cells` and frame state into `frame`.
 ///
 /// Returns the number of cells written, or a negative error code. Cells are
@@ -1267,6 +1324,8 @@ mod tests {
         assert_eq!(offset_of!(CmuxCell, text_utf8), 17);
         assert_eq!(size_of::<CmuxFrame>(), 24);
         assert_eq!(offset_of!(CmuxFrame, default_fg), 12);
+        assert_eq!(size_of::<CmuxPresentation>(), 8);
+        assert_eq!(offset_of!(CmuxPresentation, selection_fg), 4);
     }
 
     #[test]
@@ -1283,6 +1342,21 @@ mod tests {
 
         assert_eq!(unsafe { cmux_mux_apply_theme_text(&mut *mux, std::ptr::null(), 0) }, 0);
         assert_eq!(mux.mux.default_colors(), baseline);
+    }
+
+    #[test]
+    fn native_presentation_tracks_theme_selection_colors_and_cell_pixels() {
+        let mut mux = test_mux();
+        let theme = b"selection-background = #112233\nselection-foreground = #ddeeff\n";
+        assert_eq!(unsafe { cmux_mux_apply_theme_text(&mut *mux, theme.as_ptr(), theme.len()) }, 0);
+
+        let mut presentation = CmuxPresentation { selection_bg: 0, selection_fg: 0 };
+        assert_eq!(unsafe { cmux_mux_presentation(&mut *mux, &mut presentation) }, 0);
+        assert_eq!(presentation.selection_bg, 0x0011_2233);
+        assert_eq!(presentation.selection_fg, 0x00dd_eeff);
+
+        assert_eq!(unsafe { cmux_mux_set_cell_pixel_size(&mut *mux, 11, 22) }, 0);
+        assert_eq!(mux.mux.cell_pixel_size(), (11, 22));
     }
 
     #[test]

@@ -53,6 +53,13 @@ internal static partial class CmuxNative
     }
 
     [StructLayout(LayoutKind.Sequential)]
+    public struct Presentation
+    {
+        public uint SelectionBackground;
+        public uint SelectionForeground;
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
     public unsafe struct Workspace
     {
         public ulong Id;
@@ -136,6 +143,12 @@ internal static partial class CmuxNative
         IntPtr mux,
         ReadOnlySpan<byte> text,
         nuint len);
+
+    [LibraryImport(Library, EntryPoint = "cmux_mux_set_cell_pixel_size")]
+    public static partial int MuxSetCellPixelSize(IntPtr mux, ushort widthPx, ushort heightPx);
+
+    [LibraryImport(Library, EntryPoint = "cmux_mux_presentation")]
+    public static partial int MuxPresentation(IntPtr mux, out Presentation presentation);
 
     [LibraryImport(Library, EntryPoint = "cmux_mux_resource_request_json")]
     public static partial int MuxResourceRequestJson(

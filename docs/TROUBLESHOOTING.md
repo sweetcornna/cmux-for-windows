@@ -32,7 +32,13 @@ cargo build --manifest-path .\cmux-tui\Cargo.toml -p cmux-ffi --target x86_64-pc
 dotnet build .\windows\CmuxGui\CmuxGui.csproj -c Debug -r win-x64
 ```
 
-Review `%LOCALAPPDATA%\cmux-gui.log` for startup and topology errors. A newly selected terminal should progress from `TerminalView ctor` and `Loaded` to `CreateResources`, `SyncGrid`, and a nonzero `TabOpen`; if it stops after `Loaded`, rebuild or reinstall a current version containing the deferred Win2D canvas attachment fix. Do not post the log publicly without checking it for local paths or other sensitive context.
+Review `%LOCALAPPDATA%\cmux-gui.log` for startup and topology errors. A newly selected terminal should progress from `TerminalView ctor` and `Loaded` to `CreateResources`, `SyncGrid`, and a nonzero `TabOpen`; if it stops after `Loaded`, rebuild or reinstall the current version. Do not post the log publicly without checking it for local paths or other sensitive context.
+
+## Terminal glyphs, boxes, or cursors are misaligned
+
+The Windows GUI uses DirectWrite/Direct2D and constrains every Ghostty grapheme to its assigned one- or two-cell grid span. Confirm the configured primary font is installed, then move the window once between displays if Windows recently changed display scaling. Rebuild both `cmux_ffi.dll` and the WinUI project together after a source update; an old DLL does not expose the presentation APIs used by the current GUI.
+
+System DirectWrite fallback handles characters missing from the primary font, so CJK and emoji may use a different face while retaining the terminal grid. Exact glyph shapes can differ from Ghostty on another platform, but cell positions and cursor spans should remain aligned. If they do not, record the font name, Windows display scale, cursor shape, and whether the glyph occupies one or two cells; do not include terminal contents or credentials in diagnostics.
 
 ## No preferred shell starts
 

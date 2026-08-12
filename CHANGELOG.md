@@ -6,6 +6,15 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ## [Unreleased]
 
+### Changed
+
+- Replaced run-shaped terminal text with native DirectWrite/Direct2D per-grapheme grid rendering, preserving Ghostty's one- and two-cell placement across fallback fonts, CJK, emoji, box drawing, bold, and italic text.
+- Published physical cell metrics to the Rust mux so ConPTY pixel geometry follows the WinUI renderer at the current display DPI.
+
+### Fixed
+
+- Kept block-cursor glyphs readable, honored steady and blinking cursor modes and blinking text, applied complete inverse colors, and rendered selection foreground/background colors from the active mux theme.
+
 ## [0.3.3] - 2026-08-11
 
 ### Fixed

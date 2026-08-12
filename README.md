@@ -13,6 +13,7 @@ A native Windows terminal workspace built with WinUI 3, ConPTY, Rust, and Ghostt
 - Real Windows pseudoterminals through ConPTY.
 - Workspaces, screens, draggable split panes, and terminal and WebView2 browser tabs.
 - Native keyboard, mouse, selection, clipboard, pane-focus, and pane-zoom interactions with uniformly sized compact action buttons and neutral pane borders.
+- DirectWrite/Direct2D terminal rendering that shapes each Ghostty grapheme inside its assigned one- or two-cell grid span, including readable block cursors, selection colors, text blink, and color-font fallback.
 - Stable live terminal and browser controls during pane and workspace switches, topology polling, and split-layout changes, with inactive terminal rendering paused and selected terminals ready for input without a visual-tree reload gap.
 - Durable workspace topology across app restarts; restored terminals start fresh shells.
 - Ghostty-compatible colors, fonts, palettes, bundled themes, and custom themes applied consistently to existing and newly created terminals, plus a live custom accent for shell actions and settings controls.
@@ -116,7 +117,7 @@ Terminal keystrokes and pasted text are intentionally never written to the diagn
 
 ## Relationship to upstream
 
-This fork is derived from [manaflow-ai/cmux](https://github.com/manaflow-ai/cmux) and retains the applicable copyright notices and license terms. The terminal parser and renderer are built from the repository's Ghostty submodule, which is derived from [ghostty-org/ghostty](https://github.com/ghostty-org/ghostty).
+This fork is derived from [manaflow-ai/cmux](https://github.com/manaflow-ai/cmux) and retains the applicable copyright notices and license terms. Terminal parsing and state come from the repository's Ghostty submodule, which is derived from [ghostty-org/ghostty](https://github.com/ghostty-org/ghostty); the Windows GUI renders that state with DirectWrite/Direct2D.
 
 The name “cmux” identifies the software lineage. It does not imply that Manaflow or the upstream maintainers publish or support these Windows builds. Bugs in this fork should be reported in this repository, not to the upstream project.
 

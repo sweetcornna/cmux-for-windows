@@ -24,9 +24,9 @@ The standalone `cmux-tui.exe` uses the same core directly and exposes the local 
 
 ## Frontend boundary
 
-`windows/CmuxGui` renders the application shell, workspace and screen navigation, pane layout, tabs, the Win2D terminal canvas, WebView2 browser controls, settings, localization, and Explorer integration. It calls `cmux_ffi.dll` through declarations in `windows/CmuxGui/Interop/CmuxNative.cs`.
+`windows/CmuxGui` renders the application shell, workspace and screen navigation, pane layout, tabs, the DirectWrite/Direct2D terminal surface hosted by Win2D, WebView2 browser controls, settings, localization, and Explorer integration. It calls `cmux_ffi.dll` through declarations in `windows/CmuxGui/Interop/CmuxNative.cs`.
 
-The FFI layer converts the native GUI's requests into core mutations and serializes snapshots that the C# layer can consume. Native allocations crossing the ABI must be released by the matching FFI function; do not free Rust-owned memory from C#.
+The FFI layer converts the native GUI's requests into core mutations and serializes snapshots that the C# layer can consume. Native allocations crossing the ABI must be released by the matching FFI function; do not free Rust-owned memory from C#. The GUI publishes the DirectWrite cell size in physical pixels to the mux, which applies it to live surfaces and uses it for new ConPTY geometry; this keeps terminal pixel queries aligned with the grid drawn at the current display DPI.
 
 ## Authoritative topology
 
@@ -44,7 +44,7 @@ The WinUI frontend projects a core snapshot into controls. Actions such as split
 
 ## Terminal lifecycle
 
-A logical terminal owns a ConPTY-backed child process while the application is running. Terminal bytes are parsed by Ghostty's VT engine and rendered by the Win2D terminal control.
+A logical terminal owns a ConPTY-backed child process while the application is running. Terminal bytes are parsed by Ghostty's VT engine into a fixed cell grid. The WinUI terminal control renders that grid through Win2D's DirectWrite/Direct2D surface: each grapheme is shaped independently and clipped to its Ghostty-assigned one- or two-cell span, while the frontend composes selection, blink, text decorations, and cursor visuals. The renderer never owns a second PTY or VT parser.
 
 Workspace topology is durable; process state is not. After the GUI exits:
 
