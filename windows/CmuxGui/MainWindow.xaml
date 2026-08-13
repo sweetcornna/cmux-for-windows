@@ -73,6 +73,21 @@
                 <!-- Settings keeps the workspace mounted but hides its surface,
                      so terminal processes continue without showing through. -->
                 <Frame x:Name="SettingsFrame" Visibility="Collapsed" />
+
+                <InfoBar
+                    x:Name="AgentNotificationBar"
+                    Margin="16"
+                    MaxWidth="480"
+                    HorizontalAlignment="Right"
+                    VerticalAlignment="Top"
+                    IsClosable="True"
+                    IsOpen="False">
+                    <InfoBar.ActionButton>
+                        <Button
+                            x:Name="AgentNotificationFocusButton"
+                            Click="OnAgentNotificationFocus" />
+                    </InfoBar.ActionButton>
+                </InfoBar>
             </Grid>
         </NavigationView>
         </Grid>

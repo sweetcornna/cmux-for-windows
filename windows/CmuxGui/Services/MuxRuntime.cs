@@ -225,6 +225,45 @@ internal sealed class MuxRuntime : IDisposable
             "terminal appearance");
     }
 
+    public bool PersistRestartState() =>
+        Check(CmuxNative.MuxPersistRestartState(_handle), "terminal restart state");
+
+    public bool SetTerminalRestartCwd(string terminal, string? cwd)
+    {
+        var terminalBytes = Encoding.UTF8.GetBytes(terminal);
+        var cwdBytes = string.IsNullOrWhiteSpace(cwd) ? Array.Empty<byte>() : Encoding.UTF8.GetBytes(cwd);
+        return Check(
+            CmuxNative.MuxTerminalSetRestartCwd(
+                _handle,
+                terminalBytes,
+                (nuint)terminalBytes.Length,
+                cwdBytes,
+                (nuint)cwdBytes.Length),
+            "terminal restart directory");
+    }
+
+    public bool ReportAgent(string terminal, string state, string? sourceSession) =>
+        TryMutation("agent.report", new()
+        {
+            ["machine"] = "current",
+            ["session"] = "current",
+            ["terminal_id"] = terminal,
+            ["state"] = state,
+            ["source"] = "hook",
+            ["source_session"] = sourceSession,
+        });
+
+    public bool CreateNotification(string terminal, string title, string body) =>
+        TryMutation("notification.create", new()
+        {
+            ["machine"] = "current",
+            ["session"] = "current",
+            ["terminal_id"] = terminal,
+            ["title"] = title,
+            ["body"] = body,
+            ["level"] = "info",
+        });
+
     public bool CreateTerminal(string workspace, string? cwd = null)
     {
         var workspaceBytes = Encoding.UTF8.GetBytes(workspace);

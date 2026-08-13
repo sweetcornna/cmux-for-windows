@@ -144,6 +144,7 @@ fn terminal(id: &str, workspace_key: &str) -> RegistryTerminal {
         incarnation: None,
         lifecycle: TerminalLifecycle::Launching,
         launch_spec: json!({"command":["/bin/zsh"],"cwd":"/tmp","rows":24,"cols":80}),
+        restart_cwd: None,
         exit: None,
     }
 }

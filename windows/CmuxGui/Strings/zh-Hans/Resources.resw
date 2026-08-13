@@ -190,6 +190,33 @@
   <data name="Terminal_Exited" xml:space="preserve">
     <value>已退出</value>
   </data>
+  <data name="Agent_Session" xml:space="preserve">
+    <value>AI 会话</value>
+  </data>
+  <data name="Agent_Working" xml:space="preserve">
+    <value>工作中</value>
+  </data>
+  <data name="Agent_Blocked" xml:space="preserve">
+    <value>需要处理</value>
+  </data>
+  <data name="Agent_Idle" xml:space="preserve">
+    <value>空闲</value>
+  </data>
+  <data name="Agent_Done" xml:space="preserve">
+    <value>已完成</value>
+  </data>
+  <data name="Agent_Unknown" xml:space="preserve">
+    <value>未知</value>
+  </data>
+  <data name="Agent_NotificationBlocked" xml:space="preserve">
+    <value>会话需要你的处理。</value>
+  </data>
+  <data name="Agent_NotificationDone" xml:space="preserve">
+    <value>会话已结束。</value>
+  </data>
+  <data name="Agent_NotificationFocus" xml:space="preserve">
+    <value>聚焦会话</value>
+  </data>
   <data name="Pane_Browser" xml:space="preserve">
     <value>浏览器</value>
   </data>

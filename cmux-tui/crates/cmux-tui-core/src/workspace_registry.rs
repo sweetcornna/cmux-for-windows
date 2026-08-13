@@ -40,9 +40,10 @@ use effect_store::{
     create_resource_effect_schema, delete_legacy_sensitive_effect_receipts,
     initialize_resource_input_receipt_retention, prune_resource_events, recover_resource_effects,
 };
-pub use public_projection_store::RegistryPublicProjections;
+pub(crate) use public_projection_store::RegistryAgentProjection;
 #[cfg(test)]
-pub use public_projection_store::{RegistryAgentProjection, RegistryNotificationProjection};
+pub use public_projection_store::RegistryNotificationProjection;
+pub use public_projection_store::RegistryPublicProjections;
 pub(crate) use resource_store::validate_registry_screen_projection;
 #[allow(unused_imports)]
 pub use resource_store::{
@@ -58,7 +59,7 @@ use resource_store::{
     resource_tabs_has_legacy_content_uniqueness, validate_resource_invariants,
 };
 
-const SCHEMA_VERSION: i64 = 9;
+const SCHEMA_VERSION: i64 = 10;
 const RESOURCE_EFFECT_PEPPER_SCHEMA_VERSION: i64 = 7;
 const MAX_ID_LEN: usize = 128;
 const MAX_WORKSPACE_KEY_LEN: usize = 256;
@@ -292,6 +293,7 @@ pub struct RegistryTerminal {
     pub incarnation: Option<String>,
     pub lifecycle: TerminalLifecycle,
     pub launch_spec: Value,
+    pub restart_cwd: Option<String>,
     pub exit: Option<Value>,
 }
 
@@ -485,10 +487,27 @@ impl WorkspaceRegistry {
                 require_resource_effect_pepper_id(&tx, &resource_effect_pepper_id)?;
                 tx.commit()?;
             }
+            Some(9) => {
+                let tx = connection.unchecked_transaction()?;
+                create_workspace_schema(&tx)?;
+                create_terminal_schema(&tx)?;
+                migrate_terminal_restart_cwd(&tx)?;
+                create_resource_schema(&tx)?;
+                create_resource_effect_schema(&tx)?;
+                ensure_session_public_id(&tx)?;
+                backfill_workspace_public_ids(&tx)?;
+                require_resource_effect_pepper_id(&tx, &resource_effect_pepper_id)?;
+                tx.execute(
+                    "UPDATE meta SET value = ?1 WHERE key = 'schema_version'",
+                    [SCHEMA_VERSION.to_string()],
+                )?;
+                tx.commit()?;
+            }
             Some(8) => {
                 let tx = connection.unchecked_transaction()?;
                 create_workspace_schema(&tx)?;
                 create_terminal_schema(&tx)?;
+                migrate_terminal_restart_cwd(&tx)?;
                 create_resource_schema(&tx)?;
                 create_resource_effect_schema(&tx)?;
                 migrate_resource_tabs_to_multiview(&tx)?;
@@ -641,6 +660,11 @@ impl WorkspaceRegistry {
         if migrate_existing_registry && resource_tabs_has_legacy_content_uniqueness(&connection)? {
             let tx = connection.unchecked_transaction()?;
             migrate_resource_tabs_to_multiview(&tx)?;
+            tx.commit()?;
+        }
+        if migrate_existing_registry {
+            let tx = connection.unchecked_transaction()?;
+            migrate_terminal_restart_cwd(&tx)?;
             tx.commit()?;
         }
         if terminal_hosts_has_workspace_foreign_key(&connection)? {
@@ -867,7 +891,7 @@ impl WorkspaceRegistry {
         let revision = current_terminal_revision(&self.connection)?;
         let mut statement = self.connection.prepare(
             "SELECT terminal_id, workspace_key, incarnation, lifecycle,
-                    launch_spec_json, exit_json
+                    launch_spec_json, restart_cwd, exit_json
              FROM terminal_hosts
              WHERE lifecycle != 'tombstoned'
              ORDER BY created_revision ASC, terminal_id ASC",
@@ -880,6 +904,7 @@ impl WorkspaceRegistry {
                 row.get::<_, String>(3)?,
                 row.get::<_, String>(4)?,
                 row.get::<_, Option<String>>(5)?,
+                row.get::<_, Option<String>>(6)?,
             ))
         })?;
         let terminals =
@@ -897,6 +922,37 @@ impl WorkspaceRegistry {
     pub fn terminal_record(&self, terminal_id: &str) -> anyhow::Result<Option<RegistryTerminal>> {
         validate_terminal_identity("terminal id", terminal_id)?;
         read_terminal(&self.connection, terminal_id)
+    }
+
+    pub(crate) fn update_terminal_restart_cwd(
+        &mut self,
+        terminal_id: &str,
+        cwd: Option<&str>,
+    ) -> anyhow::Result<()> {
+        let entry = (terminal_id.to_string(), cwd.map(str::to_string));
+        self.update_terminal_restart_cwds(&[entry])
+    }
+
+    pub(crate) fn update_terminal_restart_cwds(
+        &mut self,
+        entries: &[(String, Option<String>)],
+    ) -> anyhow::Result<()> {
+        let tx = self.connection.transaction()?;
+        for (terminal_id, cwd) in entries {
+            validate_terminal_identity("terminal id", terminal_id)?;
+            if let Some(cwd) = cwd {
+                anyhow::ensure!(!cwd.contains('\0'), "terminal restart cwd contains a NUL byte");
+                anyhow::ensure!(cwd.len() <= 32 * 1024, "terminal restart cwd is too long");
+            }
+            tx.execute(
+                "UPDATE terminal_hosts
+                 SET restart_cwd = ?1
+                 WHERE terminal_id = ?2 AND lifecycle != 'tombstoned'",
+                params![cwd, terminal_id],
+            )?;
+        }
+        tx.commit()?;
+        Ok(())
     }
 
     pub fn replay_terminal(
@@ -1047,13 +1103,14 @@ impl WorkspaceRegistry {
         tx.execute(
             "INSERT INTO terminal_hosts(
                terminal_id, workspace_key, incarnation, lifecycle, launch_spec_json,
-               exit_json, created_revision, updated_revision, deleted_revision
-             ) VALUES(?1, ?2, ?3, ?4, ?5, ?6, ?7, ?7, ?8)
+               restart_cwd, exit_json, created_revision, updated_revision, deleted_revision
+             ) VALUES(?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?8, ?9)
              ON CONFLICT(terminal_id) DO UPDATE SET
                workspace_key=excluded.workspace_key,
                incarnation=excluded.incarnation,
                lifecycle=excluded.lifecycle,
                launch_spec_json=excluded.launch_spec_json,
+               restart_cwd=excluded.restart_cwd,
                exit_json=excluded.exit_json,
                updated_revision=excluded.updated_revision,
                deleted_revision=excluded.deleted_revision",
@@ -1063,6 +1120,7 @@ impl WorkspaceRegistry {
                 terminal.incarnation,
                 terminal.lifecycle.as_str(),
                 launch_spec_json,
+                terminal.restart_cwd,
                 exit_json,
                 sqlite_revision,
                 (terminal.lifecycle == TerminalLifecycle::Tombstoned).then_some(sqlite_revision),
@@ -1935,6 +1993,7 @@ fn create_terminal_schema(transaction: &Transaction<'_>) -> anyhow::Result<()> {
              lifecycle IN ('launching','adopting','running','exited','tombstoned')
            ),
            launch_spec_json TEXT NOT NULL,
+           restart_cwd TEXT,
            exit_json TEXT,
            created_revision INTEGER NOT NULL,
            updated_revision INTEGER NOT NULL,
@@ -1968,6 +2027,21 @@ fn create_terminal_schema(transaction: &Transaction<'_>) -> anyhow::Result<()> {
     Ok(())
 }
 
+fn migrate_terminal_restart_cwd(transaction: &Transaction<'_>) -> anyhow::Result<()> {
+    let has_column: bool = transaction.query_row(
+        "SELECT EXISTS(
+           SELECT 1 FROM pragma_table_info('terminal_hosts')
+           WHERE name = 'restart_cwd'
+         )",
+        [],
+        |row| row.get(0),
+    )?;
+    if !has_column {
+        transaction.execute("ALTER TABLE terminal_hosts ADD COLUMN restart_cwd TEXT", [])?;
+    }
+    Ok(())
+}
+
 fn terminal_hosts_has_workspace_foreign_key(connection: &Connection) -> anyhow::Result<bool> {
     let mut statement = connection.prepare("PRAGMA foreign_key_list(terminal_hosts)")?;
     let mut rows = statement.query([])?;
@@ -1998,6 +2072,7 @@ fn migrate_terminal_hosts_to_session_ownership(
              lifecycle IN ('launching','adopting','running','exited','tombstoned')
            ),
            launch_spec_json TEXT NOT NULL,
+           restart_cwd TEXT,
            exit_json TEXT,
            created_revision INTEGER NOT NULL,
            updated_revision INTEGER NOT NULL,
@@ -2005,10 +2080,10 @@ fn migrate_terminal_hosts_to_session_ownership(
          );
          INSERT INTO terminal_hosts_session_owned(
            terminal_id, workspace_key, incarnation, lifecycle, launch_spec_json,
-           exit_json, created_revision, updated_revision, deleted_revision
+           restart_cwd, exit_json, created_revision, updated_revision, deleted_revision
          )
          SELECT terminal_id, workspace_key, incarnation, lifecycle, launch_spec_json,
-                exit_json, created_revision, updated_revision, deleted_revision
+                restart_cwd, exit_json, created_revision, updated_revision, deleted_revision
          FROM terminal_hosts;
          DROP TABLE terminal_hosts;
          ALTER TABLE terminal_hosts_session_owned RENAME TO terminal_hosts;
@@ -2626,16 +2701,19 @@ fn require_live_workspace(connection: &Connection, workspace_key: &str) -> anyho
     Ok(())
 }
 
-type StoredTerminal = (String, String, Option<String>, String, String, Option<String>);
+type StoredTerminal =
+    (String, String, Option<String>, String, String, Option<String>, Option<String>);
 
 fn terminal_from_stored(stored: StoredTerminal) -> anyhow::Result<RegistryTerminal> {
-    let (terminal_id, workspace_key, incarnation, lifecycle, launch_spec, exit) = stored;
+    let (terminal_id, workspace_key, incarnation, lifecycle, launch_spec, restart_cwd, exit) =
+        stored;
     Ok(RegistryTerminal {
         terminal_id,
         workspace_key,
         incarnation,
         lifecycle: TerminalLifecycle::parse(&lifecycle)?,
         launch_spec: serde_json::from_str(&launch_spec)?,
+        restart_cwd,
         exit: exit.map(|value| serde_json::from_str(&value)).transpose()?,
     })
 }
@@ -2647,11 +2725,19 @@ fn read_terminal(
     let stored = connection
         .query_row(
             "SELECT terminal_id, workspace_key, incarnation, lifecycle,
-                    launch_spec_json, exit_json
+                    launch_spec_json, restart_cwd, exit_json
              FROM terminal_hosts WHERE terminal_id = ?1",
             [terminal_id],
             |row| {
-                Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?, row.get(5)?))
+                Ok((
+                    row.get(0)?,
+                    row.get(1)?,
+                    row.get(2)?,
+                    row.get(3)?,
+                    row.get(4)?,
+                    row.get(5)?,
+                    row.get(6)?,
+                ))
             },
         )
         .optional()?;

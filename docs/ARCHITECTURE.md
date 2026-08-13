@@ -46,14 +46,15 @@ The WinUI frontend projects a core snapshot into controls. Actions such as split
 
 A logical terminal owns a ConPTY-backed child process while the application is running. Terminal bytes are parsed by Ghostty's VT engine into a fixed cell grid. The WinUI terminal control renders that grid through Win2D's DirectWrite/Direct2D surface: each grapheme is shaped independently and clipped to its Ghostty-assigned one- or two-cell span, while the frontend composes selection, blink, text decorations, and cursor visuals. The renderer never owns a second PTY or VT parser.
 
-Workspace topology is durable; process state is not. After the GUI exits:
+Workspace topology and a bounded restart descriptor are durable; process state is not. After the GUI exits:
 
-- workspaces, splits, panes, tabs, ordering, and active workspace can be restored;
+- workspaces, splits, panes, tabs, ordering, active workspace, and each terminal's last validated local working directory can be restored;
 - previous ConPTY processes are gone;
-- output, scrollback, command history, command line, and process working directory are not replayed;
-- each restored logical terminal starts a fresh default shell in the user's home directory.
+- output, scrollback, command history, and arbitrary command lines are not replayed;
+- an ordinary restored terminal starts a fresh default shell in its saved directory, or the user's home directory when that directory is missing or unsafe;
+- a Claude Code, OpenCode, or Codex terminal with a hook-confirmed provider session ID starts a new ConPTY in the saved directory and invokes the provider's fixed resume argv.
 
-The default shell search order is `pwsh.exe`, `powershell.exe`, then `cmd.exe`.
+The default shell search order is `pwsh.exe`, `powershell.exe`, then `cmd.exe`. Provider integration is scoped to GUI terminal child processes by a per-process `PATH` prefix and per-invocation plugin/hook configuration; it does not edit the user's global provider configuration. Completion and attention events create a durable cmux notification and a focusable notification bar inside the GUI; the application does not register or send Windows system notifications.
 
 ## Browser lifecycle
 
@@ -78,7 +79,7 @@ WebView2 state and browsing history are live frontend state. Restart restores th
 
 The native GUI opens the persistent `cmux-gui` session. Its registry is stored beneath the normal session state root using a stable session hash. Closing the main window disposes live terminal and browser views while preserving the core topology. Closing a pane tab, screen, or workspace is a durable delete and therefore changes what appears on the next launch.
 
-A folder passed through Explorer's new-workspace command is forwarded to the running main instance and creates a workspace there. The new-window command opens an independent transient mux that does not create a durable session registry. A launch folder applies only to the newly created workspace for that launch; it is not a promise to restore the previous process working directory later.
+A folder passed through Explorer's new-workspace command is forwarded to the running main instance and creates a workspace there. The new-window command opens an independent transient mux that does not create a durable session registry. A persistent workspace records that launch folder as the terminal's initial restart directory and later replaces it only with a validated local directory reported by OSC 7 or an integrated agent hook.
 
 ## Configuration and themes
 
@@ -93,6 +94,7 @@ The settings surface scrolls vertically, constrains its content to the current v
 ## Security boundaries
 
 - Terminal keyboard and character content must never enter the diagnostic log.
+- Agent hooks may persist only provider kind, provider session ID, normalized state, stable terminal ID, and a validated local working directory. Prompts, assistant responses, terminal output, credentials, and tool payloads must not cross the GUI status bridge.
 - Local paths and non-sensitive errors can appear in `%LOCALAPPDATA%\cmux-gui.log`; users should review it before sharing.
 - Windows permission restriction helpers do not yet provide Unix-equivalent owner-only guarantees.
 - The public installer is currently unsigned and relies on the separately published SHA-256 sidecar for integrity verification.

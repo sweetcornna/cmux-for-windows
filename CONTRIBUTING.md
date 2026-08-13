@@ -42,7 +42,7 @@ Run the focused Windows checks before opening a pull request:
 cargo fmt --manifest-path .\cmux-tui\Cargo.toml --all -- --check
 cargo build --manifest-path .\cmux-tui\Cargo.toml -p cmux-tui -p cmux-ffi --target x86_64-pc-windows-gnu --locked
 cargo test --manifest-path .\cmux-tui\Cargo.toml -p cmux-tui-core --lib --target x86_64-pc-windows-gnu --locked workspace_registry::tests::
-cargo test --manifest-path .\cmux-tui\Cargo.toml -p cmux-tui-core --lib --target x86_64-pc-windows-gnu --locked persistent_gui_restart_restores_workspaces_with_fresh_default_shells
+cargo test --manifest-path .\cmux-tui\Cargo.toml -p cmux-tui-core --lib --target x86_64-pc-windows-gnu --locked persistent_gui_restart_restores_terminal_cwds_and_agent_sessions
 dotnet build .\windows\CmuxGui\CmuxGui.csproj -c Debug -r win-x64
 ```
 

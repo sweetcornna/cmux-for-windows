@@ -1,8 +1,10 @@
 using System;
 using System.Collections.Generic;
+using System.IO;
 using System.Linq;
 using System.Runtime.InteropServices;
 using System.Text;
+using System.Text.Json;
 using CmuxGui.Controls;
 using CmuxGui.Input;
 using CmuxGui.Services;
@@ -70,6 +72,7 @@ public sealed partial class MainWindow : Window
 
     private readonly MuxRuntime _mux;
     private readonly Dictionary<string, WorkspaceEntry> _workspaces = [];
+    private readonly Dictionary<string, string> _agentStates = new(StringComparer.Ordinal);
     private readonly Grid _workspaceViewsHost = new();
     private readonly string? _launchFolder;
     private WorkspaceView? _visibleWorkspace;
@@ -92,6 +95,7 @@ public sealed partial class MainWindow : Window
     private bool _topologyPolling;
     private bool _topologyFailureLogged;
     private bool _dialogOpen;
+    private string? _agentNotificationTerminal;
     private int _tabCounter;
     private bool _windowActivated;
     private bool _closed;
@@ -685,6 +689,7 @@ public sealed partial class MainWindow : Window
     {
         NavSearch.PlaceholderText = Loc.S("Nav_Search");
         WorkspacesHeader.Content = Loc.S("Nav_Workspaces");
+        AgentNotificationFocusButton.Content = Loc.S("Agent_NotificationFocus");
         var newWorkspace = Loc.S("Workspace_New");
         var closeWorkspace = Loc.S("Workspace_Close");
         ToolTipService.SetToolTip(NewWorkspaceButton, newWorkspace);
@@ -805,6 +810,131 @@ public sealed partial class MainWindow : Window
         {
             Nav.SelectedItem = selected.Item;
             ShowWorkspace(selected);
+        }
+    }
+
+    public void HandleAgentHook(string provider, string terminal, string payload)
+    {
+        if (_closed
+            || provider is not ("claude" or "opencode" or "codex")
+            || terminal.Length is < 6 or > 128)
+        {
+            return;
+        }
+        try
+        {
+            using var document = JsonDocument.Parse(payload);
+            var root = document.RootElement;
+            var sessionId = root.GetProperty("session_id").GetString();
+            var state = root.GetProperty("state").GetString();
+            var cwd = root.TryGetProperty("cwd", out var cwdValue) ? cwdValue.GetString() : null;
+            var notify = root.TryGetProperty("notify", out var notifyValue)
+                && notifyValue.ValueKind == JsonValueKind.True;
+            var resumable = !root.TryGetProperty("resumable", out var resumableValue)
+                || resumableValue.ValueKind != JsonValueKind.False;
+            if (string.IsNullOrWhiteSpace(sessionId)
+                || sessionId.Length > 512
+                || state is not ("working" or "blocked" or "idle" or "done" or "unknown"))
+            {
+                return;
+            }
+            if (!string.IsNullOrWhiteSpace(cwd) && Directory.Exists(cwd))
+            {
+                _mux.SetTerminalRestartCwd(terminal, cwd);
+            }
+            var previous = _agentStates.GetValueOrDefault(terminal);
+            if (!_mux.ReportAgent(
+                terminal,
+                state,
+                resumable ? $"{provider}:{sessionId}" : null))
+            {
+                return;
+            }
+            _agentStates[terminal] = state;
+            if (notify && previous != state && state is "blocked" or "done")
+            {
+                var snapshot = _mux.Snapshot();
+                var agent = snapshot.Agents.FirstOrDefault(candidate => candidate.TerminalId == terminal);
+                if (agent is not null)
+                {
+                    var title = $"{agent.Provider} · {WorkspaceView.AgentStateLabel(state)}";
+                    var body = state == "blocked"
+                        ? Loc.S("Agent_NotificationBlocked")
+                        : Loc.S("Agent_NotificationDone");
+                    _mux.CreateNotification(terminal, title, body);
+                    ShowAgentNotification(terminal, title, body, state);
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            Diag.Log($"agent hook rejected: {ex.Message}");
+        }
+    }
+
+    private void ShowAgentNotification(string terminalId, string title, string body, string state)
+    {
+        _agentNotificationTerminal = terminalId;
+        AgentNotificationBar.Title = title;
+        AgentNotificationBar.Message = body;
+        AgentNotificationBar.Severity = state == "blocked"
+            ? InfoBarSeverity.Warning
+            : InfoBarSeverity.Success;
+        AgentNotificationBar.IsOpen = true;
+    }
+
+    private void OnAgentNotificationFocus(object sender, RoutedEventArgs args)
+    {
+        if (_agentNotificationTerminal is { } terminal)
+        {
+            FocusTerminal(terminal);
+        }
+        AgentNotificationBar.IsOpen = false;
+    }
+
+    private void FocusTerminal(string terminalId)
+    {
+        try
+        {
+            var snapshot = _mux.Snapshot();
+            var tab = snapshot.Tabs.FirstOrDefault(candidate => candidate.ContentId == terminalId);
+            var pane = tab is null
+                ? null
+                : snapshot.Panes.FirstOrDefault(candidate => candidate.Id == tab.PaneId);
+            var screen = pane is null
+                ? null
+                : snapshot.Screens.FirstOrDefault(candidate => candidate.Id == pane.ScreenId);
+            if (tab is null || pane is null || screen is null
+                || !_workspaces.TryGetValue(screen.WorkspaceId, out var entry))
+            {
+                ActivateWindow();
+                return;
+            }
+            _mux.SelectWorkspace(entry.Workspace.PublicId);
+            _mux.FocusScreen(screen.Id);
+            _mux.FocusPane(pane.Id);
+            _mux.SelectTab(tab.Id);
+            var refreshed = _mux.Snapshot();
+            SyncWorkspaceNavigation(_mux.Workspaces(), refreshed, followActive: true);
+            Nav.SelectedItem = entry.Item;
+            ShowWorkspace(entry);
+            ActivateWindow();
+            FocusSelectedTerminal("agent-notification");
+        }
+        catch (Exception ex)
+        {
+            Diag.Log($"agent notification focus failed: {ex.Message}");
+            ActivateWindow();
+        }
+    }
+
+    private void ActivateWindow()
+    {
+        Activate();
+        if (_windowHandle != IntPtr.Zero)
+        {
+            ShowWindow(_windowHandle, 9);
+            SetForegroundWindow(_windowHandle);
         }
     }
 
@@ -939,6 +1069,15 @@ public sealed partial class MainWindow : Window
         var activePane = screen?.Layout.ActivePaneId;
         var tab = snapshot.Tabs.FirstOrDefault(candidate =>
             candidate.PaneId == activePane && candidate.Focused);
+        var agent = tab is null
+            ? null
+            : snapshot.Agents.FirstOrDefault(candidate =>
+                candidate.TerminalId == tab.ContentId
+                && !string.IsNullOrWhiteSpace(candidate.SourceSession));
+        if (agent is not null)
+        {
+            return $"{agent.Provider} · {WorkspaceView.AgentStateLabel(agent.State)}";
+        }
         var cwd = tab is null
             ? null
             : snapshot.Terminals.FirstOrDefault(terminal => terminal.Id == tab.ContentId)?.Cwd;
@@ -1391,6 +1530,19 @@ public sealed partial class MainWindow : Window
         {
             var latest = _mux.Workspaces();
             var snapshot = _mux.Snapshot();
+            foreach (var agent in snapshot.Agents)
+            {
+                _agentStates[agent.TerminalId] = agent.State;
+            }
+            var liveAgentTerminals = snapshot.Agents
+                .Select(agent => agent.TerminalId)
+                .ToHashSet(StringComparer.Ordinal);
+            foreach (var terminal in _agentStates.Keys
+                .Where(terminal => !liveAgentTerminals.Contains(terminal))
+                .ToList())
+            {
+                _agentStates.Remove(terminal);
+            }
             var changed = snapshot.Cursor.Generation != _snapshotGeneration
                 || snapshot.Cursor.Revision != _snapshotRevision;
             SyncWorkspaceNavigation(latest, snapshot, followActive: changed);
@@ -1459,6 +1611,7 @@ public sealed partial class MainWindow : Window
         _topologyTimer.Stop();
         _topologyTimer.Tick -= OnTopologyTick;
 
+        _mux.PersistRestartState();
         foreach (var entry in _workspaces.Values)
         {
             entry.View.Dispose();
@@ -1517,6 +1670,14 @@ public sealed partial class MainWindow : Window
 
     [DllImport("user32.dll")]
     private static extern IntPtr GetForegroundWindow();
+
+    [DllImport("user32.dll")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool SetForegroundWindow(IntPtr window);
+
+    [DllImport("user32.dll")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool ShowWindow(IntPtr window, int command);
 
     [DllImport("kernel32.dll", CharSet = CharSet.Unicode)]
     private static extern IntPtr GetModuleHandle(string? moduleName);

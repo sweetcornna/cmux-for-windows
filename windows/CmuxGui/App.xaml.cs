@@ -3,6 +3,7 @@ using System.IO;
 using System.IO.Pipes;
 using System.Linq;
 using System.Text;
+using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
 using CmuxGui.Services;
@@ -25,6 +26,8 @@ public partial class App : Application
     private static bool _repairShell;
     private static bool _unregisterShell;
     private static bool _launchAsNewWindow;
+    private static string? _agentHookProvider;
+    private static string? _agentHookTerminal;
     private Mutex? _instanceMutex;
     private CancellationTokenSource? _activationCancellation;
 
@@ -98,6 +101,14 @@ public partial class App : Application
                 return;
             }
 
+            if (string.Equals(args[i], "--agent-hook", StringComparison.OrdinalIgnoreCase)
+                && i + 2 < args.Length)
+            {
+                _agentHookProvider = args[i + 1];
+                _agentHookTerminal = args[i + 2];
+                return;
+            }
+
             var isWindow = string.Equals(args[i], "--new-window", StringComparison.OrdinalIgnoreCase);
             var isWorkspace = string.Equals(args[i], "--new-workspace", StringComparison.OrdinalIgnoreCase);
             if ((isWindow || isWorkspace) && i + 1 < args.Length)
@@ -126,6 +137,13 @@ public partial class App : Application
         if (_unregisterShell)
         {
             Environment.ExitCode = ShellIntegration.Unregister() ? 0 : 1;
+            Exit();
+            return;
+        }
+
+        if (_agentHookProvider is not null && _agentHookTerminal is not null)
+        {
+            ForwardAgentHook(_agentHookProvider, _agentHookTerminal);
             Exit();
             return;
         }
@@ -181,6 +199,7 @@ public partial class App : Application
                 PipeOptions.None);
             pipe.Connect(5000);
             using var writer = new BinaryWriter(pipe, Encoding.UTF8, leaveOpen: true);
+            writer.Write((byte)1);
             writer.Write(folder is not null);
             if (folder is not null)
             {
@@ -193,6 +212,34 @@ public partial class App : Application
         {
             Diag.Log($"activation forwarding failed: {ex.Message}");
             return false;
+        }
+    }
+
+    private static void ForwardAgentHook(string provider, string terminal)
+    {
+        try
+        {
+            var payload = Console.In.ReadToEnd();
+            if (payload.Length is 0 or > 65536)
+            {
+                return;
+            }
+            using var document = JsonDocument.Parse(payload);
+            using var pipe = new NamedPipeClientStream(
+                ".",
+                ActivationPipeName,
+                PipeDirection.Out,
+                PipeOptions.None);
+            pipe.Connect(750);
+            using var writer = new BinaryWriter(pipe, Encoding.UTF8, leaveOpen: true);
+            writer.Write((byte)2);
+            writer.Write(provider);
+            writer.Write(terminal);
+            writer.Write(payload);
+            writer.Flush();
+        }
+        catch
+        {
         }
     }
 
@@ -209,11 +256,27 @@ public partial class App : Application
                     PipeDirection.In,
                     1,
                     PipeTransmissionMode.Byte,
-                    PipeOptions.Asynchronous);
+                    PipeOptions.Asynchronous | PipeOptions.CurrentUserOnly);
                 await pipe.WaitForConnectionAsync(cancellationToken);
                 using var reader = new BinaryReader(pipe, Encoding.UTF8, leaveOpen: true);
-                var folder = reader.ReadBoolean() ? reader.ReadString() : null;
-                window.DispatcherQueue.TryEnqueue(() => window.HandleActivation(folder));
+                switch (reader.ReadByte())
+                {
+                    case 1:
+                    {
+                        var folder = reader.ReadBoolean() ? reader.ReadString() : null;
+                        window.DispatcherQueue.TryEnqueue(() => window.HandleActivation(folder));
+                        break;
+                    }
+                    case 2:
+                    {
+                        var provider = reader.ReadString();
+                        var terminal = reader.ReadString();
+                        var payload = reader.ReadString();
+                        window.DispatcherQueue.TryEnqueue(
+                            () => window.HandleAgentHook(provider, terminal, payload));
+                        break;
+                    }
+                }
             }
             catch (OperationCanceledException)
             {

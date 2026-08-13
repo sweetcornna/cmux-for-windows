@@ -416,7 +416,18 @@ pub(crate) fn public_terminal_snapshot(
         "running": durable.lifecycle == TerminalLifecycle::Running,
         "lifecycle": lifecycle,
     });
-    if let Some(cwd) = surface.and_then(crate::Surface::spawn_cwd) {
+    if let Some(cwd) = surface
+        .and_then(|surface| {
+            surface
+                .pwd()
+                .as_deref()
+                .and_then(crate::platform::terminal_pwd_to_local_path)
+                .filter(|cwd| cwd.is_dir())
+                .map(|cwd| cwd.to_string_lossy().into_owned())
+        })
+        .or_else(|| durable.restart_cwd.clone())
+        .or_else(|| surface.and_then(crate::Surface::spawn_cwd))
+    {
         terminal["cwd"] = json!(cwd);
     }
     if durable.lifecycle == TerminalLifecycle::Exited {

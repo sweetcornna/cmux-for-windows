@@ -187,6 +187,17 @@ internal static partial class CmuxNative
         ReadOnlySpan<byte> cwd,
         nuint cwdLen);
 
+    [LibraryImport(Library, EntryPoint = "cmux_mux_terminal_set_restart_cwd")]
+    public static partial int MuxTerminalSetRestartCwd(
+        IntPtr mux,
+        ReadOnlySpan<byte> terminal,
+        nuint terminalLen,
+        ReadOnlySpan<byte> cwd,
+        nuint cwdLen);
+
+    [LibraryImport(Library, EntryPoint = "cmux_mux_persist_restart_state")]
+    public static partial int MuxPersistRestartState(IntPtr mux);
+
     [LibraryImport(Library, EntryPoint = "cmux_mux_snapshot_json")]
     public static partial int MuxSnapshotJson(IntPtr mux, Span<byte> buffer, nuint capacity);
 

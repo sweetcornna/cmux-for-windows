@@ -84,7 +84,7 @@ Verify at minimum:
 - Start menu shortcut launches the GUI, uses `%LOCALAPPDATA%\Programs\cmux\Assets\AppIcon.ico`, and Windows Search lists only that entry; an obsolete `cmux.Windows` full development package must not remain installed.
 - A terminal starts in the expected shell.
 - Workspaces, splits, tabs, keyboard input, and mouse input work.
-- Restart restores topology with fresh shells.
+- Restart restores topology and valid per-terminal local directories with new shells; active Claude Code, OpenCode, and Codex sessions resume through their provider CLIs, and completion/attention notifications appear only inside cmux without a Windows system notification.
 - Enabling Explorer integration places both the new-window and new-workspace commands directly in the Windows 11 context menu and opens the selected folder with the chosen mode; disabling it hides both commands.
 - Upgrade preserves settings and workspace state.
 - Uninstall removes application files, shortcuts, the sparse package, and its current-user certificate, but preserves user data.

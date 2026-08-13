@@ -465,11 +465,14 @@ internal sealed class WorkspaceView : UserControl, IDisposable
                 .ToDictionary(terminal => terminal.Id, StringComparer.Ordinal);
             var browsers = snapshot.Browsers
                 .ToDictionary(browser => browser.Id, StringComparer.Ordinal);
+            var agents = snapshot.Agents
+                .Where(agent => !string.IsNullOrWhiteSpace(agent.SourceSession))
+                .ToDictionary(agent => agent.TerminalId, StringComparer.Ordinal);
             _activePaneId = screen.Layout.ActivePaneId;
 
             var body = !string.IsNullOrWhiteSpace(screen.Layout.ZoomedPaneId)
-                ? BuildPane(screen.Layout.ZoomedPaneId!, tabs, terminals, browsers)
-                : BuildNode(screen.Layout.Root, tabs, terminals, browsers);
+                ? BuildPane(screen.Layout.ZoomedPaneId!, tabs, terminals, browsers, agents)
+                : BuildNode(screen.Layout.Root, tabs, terminals, browsers, agents);
             Content = BuildScreenLayout(screens, screen, body);
             foreach (var tabId in _renderedTerminals)
             {
@@ -637,6 +640,9 @@ internal sealed class WorkspaceView : UserControl, IDisposable
             .ToDictionary(terminal => terminal.Id, StringComparer.Ordinal);
         var browsers = snapshot.Browsers
             .ToDictionary(browser => browser.Id, StringComparer.Ordinal);
+        var agents = snapshot.Agents
+            .Where(agent => !string.IsNullOrWhiteSpace(agent.SourceSession))
+            .ToDictionary(agent => agent.TerminalId, StringComparer.Ordinal);
         foreach (var tab in snapshot.Tabs)
         {
             _browsers.TryGetValue(tab.Id, out var browserView);
@@ -647,7 +653,7 @@ internal sealed class WorkspaceView : UserControl, IDisposable
             }
             if (_tabItems.TryGetValue(tab.Id, out var item))
             {
-                item.Header = TabTitle(tab, terminals, browsers, browserView?.DocumentTitle);
+                item.Header = TabTitle(tab, terminals, browsers, agents, browserView?.DocumentTitle);
             }
         }
     }
@@ -664,7 +670,10 @@ internal sealed class WorkspaceView : UserControl, IDisposable
             .ToDictionary(terminal => terminal.Id, StringComparer.Ordinal);
         var browsers = _snapshot.Browsers
             .ToDictionary(snapshot => snapshot.Id, StringComparer.Ordinal);
-        item.Header = TabTitle(tab, terminals, browsers, browser.DocumentTitle);
+        var agents = _snapshot.Agents
+            .Where(agent => !string.IsNullOrWhiteSpace(agent.SourceSession))
+            .ToDictionary(agent => agent.TerminalId, StringComparer.Ordinal);
+        item.Header = TabTitle(tab, terminals, browsers, agents, browser.DocumentTitle);
     }
 
     private FrameworkElement BuildScreenLayout(
@@ -762,13 +771,14 @@ internal sealed class WorkspaceView : UserControl, IDisposable
         LayoutNodeSnapshot node,
         IReadOnlyDictionary<string, TabSnapshot> tabs,
         IReadOnlyDictionary<string, TerminalSnapshot> terminals,
-        IReadOnlyDictionary<string, BrowserSnapshot> browsers) => node.Kind switch
+        IReadOnlyDictionary<string, BrowserSnapshot> browsers,
+        IReadOnlyDictionary<string, AgentSnapshot> agents) => node.Kind switch
     {
-        "leaf" when node.PaneId is not null => BuildPane(node.PaneId, tabs, terminals, browsers),
+        "leaf" when node.PaneId is not null => BuildPane(node.PaneId, tabs, terminals, browsers, agents),
         "split" when node.First is not null && node.Second is not null =>
-            BuildSplit(node, tabs, terminals, browsers),
-        "viewport" => BuildViewport(node, tabs, terminals, browsers),
-        "stack" => BuildStack(node, tabs, terminals, browsers),
+            BuildSplit(node, tabs, terminals, browsers, agents),
+        "viewport" => BuildViewport(node, tabs, terminals, browsers, agents),
+        "stack" => BuildStack(node, tabs, terminals, browsers, agents),
         _ => BuildUnavailable(Loc.S("Pane_Empty")),
     };
 
@@ -776,7 +786,8 @@ internal sealed class WorkspaceView : UserControl, IDisposable
         LayoutNodeSnapshot node,
         IReadOnlyDictionary<string, TabSnapshot> tabs,
         IReadOnlyDictionary<string, TerminalSnapshot> terminals,
-        IReadOnlyDictionary<string, BrowserSnapshot> browsers)
+        IReadOnlyDictionary<string, BrowserSnapshot> browsers,
+        IReadOnlyDictionary<string, AgentSnapshot> agents)
     {
         var horizontal = node.Direction == "horizontal";
         var ratio = Math.Clamp(node.Ratio, 0.05, 0.95);
@@ -794,8 +805,8 @@ internal sealed class WorkspaceView : UserControl, IDisposable
             grid.RowDefinitions.Add(new RowDefinition { Height = new GridLength(1 - ratio, GridUnitType.Star) });
         }
 
-        var first = BuildNode(node.First!, tabs, terminals, browsers);
-        var second = BuildNode(node.Second!, tabs, terminals, browsers);
+        var first = BuildNode(node.First!, tabs, terminals, browsers, agents);
+        var second = BuildNode(node.Second!, tabs, terminals, browsers, agents);
         var divider = BuildSplitDivider(grid, node, horizontal);
         grid.Children.Add(first);
         grid.Children.Add(divider);
@@ -889,7 +900,8 @@ internal sealed class WorkspaceView : UserControl, IDisposable
         LayoutNodeSnapshot node,
         IReadOnlyDictionary<string, TabSnapshot> tabs,
         IReadOnlyDictionary<string, TerminalSnapshot> terminals,
-        IReadOnlyDictionary<string, BrowserSnapshot> browsers)
+        IReadOnlyDictionary<string, BrowserSnapshot> browsers,
+        IReadOnlyDictionary<string, AgentSnapshot> agents)
     {
         if (node.Columns.Count == 0)
         {
@@ -903,7 +915,7 @@ internal sealed class WorkspaceView : UserControl, IDisposable
             {
                 Width = new GridLength(Math.Max(1, column.Width), GridUnitType.Star),
             });
-            var content = BuildNode(column.Root, tabs, terminals, browsers);
+            var content = BuildNode(column.Root, tabs, terminals, browsers, agents);
             Grid.SetColumn(content, index * 2);
             grid.Children.Add(content);
             if (index == node.Columns.Count - 1)
@@ -985,7 +997,8 @@ internal sealed class WorkspaceView : UserControl, IDisposable
         LayoutNodeSnapshot node,
         IReadOnlyDictionary<string, TabSnapshot> tabs,
         IReadOnlyDictionary<string, TerminalSnapshot> terminals,
-        IReadOnlyDictionary<string, BrowserSnapshot> browsers)
+        IReadOnlyDictionary<string, BrowserSnapshot> browsers,
+        IReadOnlyDictionary<string, AgentSnapshot> agents)
     {
         if (node.PaneIds.Count == 0)
         {
@@ -1020,7 +1033,7 @@ internal sealed class WorkspaceView : UserControl, IDisposable
             selector.Children.Add(button);
         }
         grid.Children.Add(selector);
-        var content = BuildPane(expanded, tabs, terminals, browsers);
+        var content = BuildPane(expanded, tabs, terminals, browsers, agents);
         Grid.SetRow(content, 1);
         grid.Children.Add(content);
         return grid;
@@ -1030,7 +1043,8 @@ internal sealed class WorkspaceView : UserControl, IDisposable
         string paneId,
         IReadOnlyDictionary<string, TabSnapshot> tabs,
         IReadOnlyDictionary<string, TerminalSnapshot> terminals,
-        IReadOnlyDictionary<string, BrowserSnapshot> browsers)
+        IReadOnlyDictionary<string, BrowserSnapshot> browsers,
+        IReadOnlyDictionary<string, AgentSnapshot> agents)
     {
         var paneTabs = tabs.Values
             .Where(tab => tab.PaneId == paneId)
@@ -1055,7 +1069,7 @@ internal sealed class WorkspaceView : UserControl, IDisposable
         {
             var item = new TabViewItem
             {
-                Header = TabTitle(tab, terminals, browsers),
+                Header = TabTitle(tab, terminals, browsers, agents),
                 Tag = tab.Id,
                 IconSource = new SymbolIconSource { Symbol = Symbol.Document },
                 HorizontalContentAlignment = HorizontalAlignment.Stretch,
@@ -1094,7 +1108,7 @@ internal sealed class WorkspaceView : UserControl, IDisposable
                 {
                     browser.Update(browserSnapshot);
                 }
-                item.Header = TabTitle(tab, terminals, browsers, browser.DocumentTitle);
+                item.Header = TabTitle(tab, terminals, browsers, agents, browser.DocumentTitle);
                 item.Content = browser;
             }
             else
@@ -1471,10 +1485,12 @@ internal sealed class WorkspaceView : UserControl, IDisposable
         TabSnapshot tab,
         IReadOnlyDictionary<string, TerminalSnapshot> terminals,
         IReadOnlyDictionary<string, BrowserSnapshot> browsers,
+        IReadOnlyDictionary<string, AgentSnapshot> agents,
         string? documentTitle = null)
     {
         terminals.TryGetValue(tab.ContentId, out var terminal);
         browsers.TryGetValue(tab.ContentId, out var browser);
+        agents.TryGetValue(tab.ContentId, out var agent);
         var title = !string.IsNullOrWhiteSpace(tab.Name)
             ? tab.Name
             : !string.IsNullOrWhiteSpace(terminal?.Title)
@@ -1486,10 +1502,23 @@ internal sealed class WorkspaceView : UserControl, IDisposable
                         : tab.ContentKind == "terminal"
                             ? Loc.S("Pane_Terminal")
                             : Loc.S("Pane_Browser");
+        if (agent is not null)
+        {
+            return $"{title} · {agent.Provider} {AgentStateLabel(agent.State)}";
+        }
         return terminal is { Running: false }
             ? $"{title} · {Loc.S("Terminal_Exited")}"
             : title;
     }
+
+    internal static string AgentStateLabel(string state) => state switch
+    {
+        "working" => Loc.S("Agent_Working"),
+        "blocked" => Loc.S("Agent_Blocked"),
+        "idle" => Loc.S("Agent_Idle"),
+        "done" => Loc.S("Agent_Done"),
+        _ => Loc.S("Agent_Unknown"),
+    };
 
     private void Mutate(Func<bool> operation, string description)
     {

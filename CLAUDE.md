@@ -35,7 +35,7 @@ cargo rustc --manifest-path .\cmux-tui\Cargo.toml -p cmux-tui --bin cmux-tui --t
 cargo fmt --manifest-path .\cmux-tui\Cargo.toml --all -- --check
 cargo build --manifest-path .\cmux-tui\Cargo.toml -p cmux-tui -p cmux-ffi --target x86_64-pc-windows-gnu --locked
 cargo test --manifest-path .\cmux-tui\Cargo.toml -p cmux-tui-core --lib --target x86_64-pc-windows-gnu --locked workspace_registry::tests::
-cargo test --manifest-path .\cmux-tui\Cargo.toml -p cmux-tui-core --lib --target x86_64-pc-windows-gnu --locked persistent_gui_restart_restores_workspaces_with_fresh_default_shells
+cargo test --manifest-path .\cmux-tui\Cargo.toml -p cmux-tui-core --lib --target x86_64-pc-windows-gnu --locked persistent_gui_restart_restores_terminal_cwds_and_agent_sessions
 dotnet build .\windows\CmuxGui\CmuxGui.csproj -c Debug -r win-x64
 ```
 
@@ -50,7 +50,7 @@ The complete Rust suite is not portable to Windows because some retained core te
 - Zig target selection must not assume `host == target` means the native ABI is correct. A Windows GNU Rust target requires a Windows GNU Zig target.
 - `BINDGEN_EXTRA_CLANG_ARGS` paths must use forward slashes because bindgen parses the variable with shell quoting rules.
 - The Rust core owns workspace topology. The WinUI layer sends mutations by stable public IDs and must not persist a competing topology.
-- Closing the GUI preserves topology but does not preserve ConPTY processes, terminal output, scrollback, command lines, or working directories.
+- Closing the GUI preserves topology and each terminal's last validated local working directory. Claude Code, OpenCode, and Codex terminals with hook-confirmed session IDs relaunch through fixed provider resume argv in a new ConPTY. Terminal output, scrollback, arbitrary command lines, and the old processes are never restored.
 - Never log terminal key input, character input, pasted text, credentials, or terminal screen contents.
 
 ## Release

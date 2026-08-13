@@ -25,6 +25,12 @@ internal sealed class MuxSnapshot
     [JsonPropertyName("browsers")]
     public List<BrowserSnapshot> Browsers { get; init; } = [];
 
+    [JsonPropertyName("agents")]
+    public List<AgentSnapshot> Agents { get; init; } = [];
+
+    [JsonPropertyName("notifications")]
+    public List<NotificationSnapshot> Notifications { get; init; } = [];
+
     [JsonPropertyName("cursor")]
     public SnapshotCursor Cursor { get; init; } = new();
 
@@ -208,6 +214,59 @@ internal sealed class TerminalSnapshot
 
     [JsonPropertyName("lifecycle")]
     public string Lifecycle { get; init; } = string.Empty;
+}
+
+internal sealed class AgentSnapshot
+{
+    [JsonPropertyName("id")]
+    public string Id { get; init; } = string.Empty;
+
+    [JsonPropertyName("terminal_id")]
+    public string TerminalId { get; init; } = string.Empty;
+
+    [JsonPropertyName("state")]
+    public string State { get; init; } = "unknown";
+
+    [JsonPropertyName("source")]
+    public string Source { get; init; } = string.Empty;
+
+    [JsonPropertyName("source_session")]
+    public string? SourceSession { get; init; }
+
+    [JsonPropertyName("updated_at_ms")]
+    public string UpdatedAtMs { get; init; } = "0";
+
+    public string Provider => SourceSession?.Split(':', 2)[0] switch
+    {
+        "claude" => "Claude Code",
+        "opencode" => "OpenCode",
+        "codex" => "Codex",
+        _ => Loc.S("Agent_Session"),
+    };
+}
+
+internal sealed class NotificationSnapshot
+{
+    [JsonPropertyName("id")]
+    public string Id { get; init; } = string.Empty;
+
+    [JsonPropertyName("title")]
+    public string Title { get; init; } = string.Empty;
+
+    [JsonPropertyName("body")]
+    public string Body { get; init; } = string.Empty;
+
+    [JsonPropertyName("level")]
+    public string Level { get; init; } = "info";
+
+    [JsonPropertyName("terminal_id")]
+    public string? TerminalId { get; init; }
+
+    [JsonPropertyName("unread")]
+    public bool Unread { get; init; }
+
+    [JsonPropertyName("created_at_ms")]
+    public string CreatedAtMs { get; init; } = "0";
 }
 
 internal sealed class BrowserSnapshot

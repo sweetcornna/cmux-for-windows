@@ -69,7 +69,7 @@ Use `CMUX_TUI_STATE_DIR` to override the state root and `CMUX_TUI_CONFIG` to ove
 
 ## Persistence
 
-The core persists workspace, split, pane, tab, and active-workspace topology. It does not preserve ConPTY process state, terminal output, scrollback, commands, or working directories. Restored logical terminals start fresh default shells.
+The core persists workspace, split, pane, tab, and active-workspace topology together with each terminal's last validated local working directory. Restored logical terminals always start new ConPTY processes in those directories, falling back to the home directory when a path is unavailable. Hook-confirmed Claude Code, OpenCode, and Codex sessions resume through fixed provider CLI commands; arbitrary commands, terminal output, scrollback, and process state are never restored.
 
 ## Test
 
@@ -84,7 +84,7 @@ cargo test --manifest-path .\cmux-tui\Cargo.toml `
   -p cmux-tui-core --lib `
   --target x86_64-pc-windows-gnu `
   --locked `
-  persistent_gui_restart_restores_workspaces_with_fresh_default_shells
+  persistent_gui_restart_restores_terminal_cwds_and_agent_sessions
 ```
 
 The entire inherited test suite is not Windows-portable; some retained tests still assume `/bin/sh` and `/tmp`.

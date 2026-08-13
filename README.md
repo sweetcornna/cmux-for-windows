@@ -15,7 +15,7 @@ A native Windows terminal workspace built with WinUI 3, ConPTY, Rust, and Ghostt
 - Native keyboard, mouse, selection, clipboard, pane-focus, and pane-zoom interactions with uniformly sized compact action buttons and neutral pane borders.
 - DirectWrite/Direct2D terminal rendering that shapes each Ghostty grapheme inside its assigned one- or two-cell grid span, including readable block cursors, selection colors, text blink, and color-font fallback.
 - Stable live terminal and browser controls during pane and workspace switches, topology polling, and split-layout changes, with inactive terminal rendering paused and selected terminals ready for input without a visual-tree reload gap.
-- Durable workspace topology across app restarts; restored terminals start fresh shells.
+- Durable workspace topology and per-terminal working directories across app restarts; terminals use new ConPTY processes, while active Claude Code, OpenCode, and Codex sessions resume through their provider CLIs.
 - Ghostty-compatible colors, fonts, palettes, bundled themes, and custom themes applied consistently to existing and newly created terminals, plus a live custom accent for shell actions and settings controls.
 - A responsive settings page that keeps controls within the visible width and hides the mounted terminal surface while settings are open.
 - English and Simplified Chinese interface strings.
@@ -32,7 +32,8 @@ The Windows GUI and local multiplexer are usable, but this fork does not provide
 | Local workspaces, screens, panes, tabs, and terminals | Supported |
 | ConPTY shell sessions | Supported |
 | Native WebView2 browser panes | Supported in the WinUI GUI; requires the Microsoft Edge WebView2 Runtime |
-| Workspace topology restoration | Supported; processes and scrollback are not restored |
+| Workspace topology restoration | Supported with per-terminal local working directories; processes, output, and scrollback are not restored |
+| Claude Code, OpenCode, and Codex sessions | Status, in-app completion/attention notifications, and provider-session resume are supported for sessions launched inside the Windows GUI; no Windows system notifications are sent |
 | Local control socket and resource CLI | Supported |
 | Remote daemon, SSH, forwarding, enrollment, and relay | Not included |
 | Cloud machine providers and machine agent | Not included |
@@ -102,7 +103,7 @@ The standalone multiplexer and resource CLI use the same Windows engine:
 .\cmux-tui.exe --session work terminal list
 ```
 
-The default shell is the first executable found from `pwsh.exe`, `powershell.exe`, and `cmd.exe`.
+The default shell is the first executable found from `pwsh.exe`, `powershell.exe`, and `cmd.exe`. In the Windows GUI, Claude Code, OpenCode, and Codex launched from terminal panes receive per-invocation local status hooks. cmux does not modify the providers' global user configuration and does not collect prompts, assistant responses, or terminal contents.
 
 ## Build from source
 

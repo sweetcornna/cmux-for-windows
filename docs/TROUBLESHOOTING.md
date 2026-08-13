@@ -52,7 +52,9 @@ If none of the preferred executables can be resolved, the engine falls back to `
 
 ## Restored terminals are empty or start in the home directory
 
-This is expected. cmux restores logical workspace topology, not live ConPTY processes. It does not restore previous process state, output, scrollback, command line, or working directory. Every restored terminal starts a fresh default shell.
+An empty terminal is expected because cmux restores logical workspace topology and a restart descriptor, not a live ConPTY process, output, scrollback, command history, or an arbitrary command line. Ordinary terminals start a fresh default shell in their last validated local working directory. If that directory no longer exists, is remote, or cannot be validated, cmux safely falls back to the user's home directory.
+
+Claude Code, OpenCode, and Codex sessions launched inside the Windows GUI report their provider session IDs through per-invocation hooks. On the next launch, cmux creates a new ConPTY in the saved directory and asks that provider CLI to resume the session. A session that was explicitly ended before cmux closed is not resumed. If status or resume is unavailable, confirm the provider executable is discoverable on `PATH` and start it from a cmux GUI terminal rather than an external console.
 
 ## Build fails with `___chkstk_ms`
 

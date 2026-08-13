@@ -6,6 +6,17 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ## [Unreleased]
 
+### Added
+
+- Added local Claude Code, OpenCode, and Codex lifecycle integrations that display working, attention, idle, and completed state without reading terminal content.
+- Added in-app completion and attention notifications that focus the exact workspace, screen, pane, and terminal tab by stable terminal identity without sending Windows system notifications.
+
+### Fixed
+
+- Restored each persistent terminal in its last validated local working directory using a new ConPTY process, with a safe home-directory fallback when the path is unavailable.
+- Resumed hook-confirmed Claude Code, OpenCode, and Codex provider sessions after GUI restart while continuing to discard process state, output, scrollback, and arbitrary command lines.
+- Aligned the resource CLI's agent state vocabulary with the Rust core's `working`, `blocked`, `idle`, `done`, and `unknown` protocol values.
+
 ## [0.3.6] - 2026-08-12
 
 ### Fixed

@@ -201,6 +201,13 @@ impl WorkspaceRegistry {
         self.durable_agents(terminal, state)
     }
 
+    pub(crate) fn public_agent_projection(
+        &self,
+        terminal: &TerminalPublicId,
+    ) -> anyhow::Result<Option<RegistryAgentProjection>> {
+        Ok(self.durable_agents(Some(terminal), None)?.into_iter().next())
+    }
+
     fn live_terminal_public_ids(&self) -> anyhow::Result<HashSet<TerminalPublicId>> {
         let mut statement = self.connection.prepare(
             "SELECT public_id
@@ -599,6 +606,7 @@ mod tests {
                                 incarnation: None,
                                 lifecycle: TerminalLifecycle::Launching,
                                 launch_spec: json!({}),
+                                restart_cwd: None,
                                 exit: None,
                             },
                         },

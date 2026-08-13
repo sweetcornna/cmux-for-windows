@@ -2430,8 +2430,16 @@ impl Mux {
             options.terminal_host_root.is_none(),
             "local terminal restart cannot replace a hosted terminal"
         );
-        options.command = None;
-        options.cwd = None;
+        let agent = self.workspace_registry.lock().unwrap().public_agent_projection(public_id)?;
+        options.command =
+            agent.as_ref().and_then(|agent| restored_agent_command(agent, &options.extra_env));
+        options.cwd = self
+            .workspace_registry
+            .lock()
+            .unwrap()
+            .terminal_record(&terminal_id)?
+            .and_then(|terminal| terminal.restart_cwd)
+            .filter(|cwd| Path::new(cwd).is_dir());
         let (cols, rows) = self.resolve_client_size(size, (options.cols, options.rows));
         options.cols = cols;
         options.rows = rows;
@@ -2637,6 +2645,7 @@ impl Mux {
                         incarnation: None,
                         lifecycle: TerminalLifecycle::Launching,
                         launch_spec: serde_json::json!({"legacy_import":true}),
+                        restart_cwd: None,
                         exit: None,
                     };
                     let mut registry = self.workspace_registry.lock().unwrap();
@@ -5418,6 +5427,7 @@ impl Mux {
                 incarnation: None,
                 lifecycle: TerminalLifecycle::Launching,
                 launch_spec,
+                restart_cwd: opts.cwd.clone(),
                 exit: None,
             };
             let reserve_replayed = {
@@ -5549,6 +5559,7 @@ impl Mux {
                 incarnation: None,
                 lifecycle: TerminalLifecycle::Launching,
                 launch_spec,
+                restart_cwd: opts.cwd.clone(),
                 exit: None,
             };
             {
@@ -6755,6 +6766,7 @@ impl Mux {
                 incarnation: None,
                 lifecycle: TerminalLifecycle::Launching,
                 launch_spec: serde_json::json!({}),
+                restart_cwd: None,
                 exit: None,
             },
         )?;
@@ -9235,6 +9247,49 @@ impl Mux {
         let (cols, rows) = surface.size();
         self.emit_terminal_resized(id, cols, rows, None);
         Ok((true, None))
+    }
+
+    pub fn set_terminal_restart_cwd(
+        &self,
+        terminal_id: &str,
+        cwd: Option<&str>,
+    ) -> anyhow::Result<()> {
+        let terminal_id = TerminalPublicId::parse(terminal_id.to_string())?;
+        if let Some(cwd) = cwd {
+            anyhow::ensure!(Path::new(cwd).is_dir(), "terminal restart cwd is not a directory");
+        }
+        let mut registry = self.workspace_registry.lock().unwrap();
+        let host_id = registry
+            .live_terminal_host_id(&terminal_id)?
+            .with_context(|| format!("unknown terminal {terminal_id}"))?;
+        registry.update_terminal_restart_cwd(&host_id, cwd)
+    }
+
+    pub fn persist_terminal_restart_state(&self) -> anyhow::Result<()> {
+        let terminals = self.with_state(|state| {
+            state
+                .terminal_catalog
+                .iter()
+                .map(|(terminal_id, surface)| (terminal_id.clone(), surface.clone()))
+                .collect::<Vec<_>>()
+        });
+        let mut registry = self.workspace_registry.lock().unwrap();
+        let mut entries = Vec::with_capacity(terminals.len());
+        for (terminal_id, surface) in terminals {
+            let Some(host_id) = registry.live_terminal_host_id(&terminal_id)? else {
+                continue;
+            };
+            let cwd = surface
+                .pwd()
+                .as_deref()
+                .and_then(crate::platform::terminal_pwd_to_local_path)
+                .filter(|cwd| cwd.is_dir())
+                .map(|cwd| cwd.to_string_lossy().into_owned());
+            if cwd.is_some() {
+                entries.push((host_id, cwd));
+            }
+        }
+        registry.update_terminal_restart_cwds(&entries)
     }
 
     /// Serialize the authoritative public resource projection for native frontends.
@@ -13975,6 +14030,51 @@ fn public_topology_result_target(operation: &str) -> Option<(&'static str, &'sta
     }
 }
 
+fn restored_agent_command(
+    agent: &crate::workspace_registry::RegistryAgentProjection,
+    environment: &[(String, String)],
+) -> Option<Vec<String>> {
+    let source_session = agent.source_session.as_deref()?;
+    let (provider, session_id) = source_session.split_once(':')?;
+    if session_id.is_empty() || session_id.len() > 512 || session_id.chars().any(char::is_control) {
+        return None;
+    }
+    #[cfg(windows)]
+    {
+        let integration = environment
+            .iter()
+            .find_map(|(key, value)| (key == "CMUX_AGENT_INTEGRATION_DIR").then_some(value))?;
+        let launcher = Path::new(integration).join("bin").join("invoke-provider.ps1");
+        if !launcher.is_file() {
+            return None;
+        }
+        let mut command = vec![
+            "powershell.exe".into(),
+            "-NoProfile".into(),
+            "-ExecutionPolicy".into(),
+            "Bypass".into(),
+            "-File".into(),
+            launcher.to_string_lossy().into_owned(),
+            provider.into(),
+            "--".into(),
+        ];
+        command.extend(match provider {
+            "claude" => vec!["--resume".into(), session_id.into()],
+            "opencode" => vec!["--session".into(), session_id.into()],
+            "codex" => vec!["resume".into(), session_id.into()],
+            _ => return None,
+        });
+        Some(command)
+    }
+    #[cfg(not(windows))]
+    match provider {
+        "claude" => Some(vec!["claude".into(), "--resume".into(), session_id.into()]),
+        "opencode" => Some(vec!["opencode".into(), "--session".into(), session_id.into()]),
+        "codex" => Some(vec!["codex".into(), "resume".into(), session_id.into()]),
+        _ => None,
+    }
+}
+
 fn terminal_launch_spec(options: &SurfaceOptions) -> Value {
     let cmux_env = options
         .extra_env
@@ -17455,13 +17555,29 @@ mod tests {
 
     #[cfg(windows)]
     #[test]
-    fn persistent_gui_restart_restores_workspaces_with_fresh_default_shells() {
+    fn persistent_gui_restart_restores_terminal_cwds_and_agent_sessions() {
         let root = std::env::temp_dir()
             .join(format!("cmux-gui-restart-{}", WorkspacePublicId::random().unwrap()));
+        let alpha_cwd = root.join("alpha-project");
+        let beta_cwd = root.join("beta-project");
+        let integration = root.join("AgentIntegration");
+        let launcher = integration.join("bin").join("invoke-provider.ps1");
+        std::fs::create_dir_all(&alpha_cwd).unwrap();
+        std::fs::create_dir_all(&beta_cwd).unwrap();
+        std::fs::create_dir_all(launcher.parent().unwrap()).unwrap();
+        std::fs::write(&launcher, "# test launcher").unwrap();
+        let options = || {
+            let mut options = SurfaceOptions::default();
+            options.extra_env.push((
+                "CMUX_AGENT_INTEGRATION_DIR".into(),
+                integration.to_string_lossy().into_owned(),
+            ));
+            options
+        };
         let session = "cmux-gui-restart";
         let first = Mux::from_workspace_registry(
             session.into(),
-            SurfaceOptions::default(),
+            options(),
             WorkspaceRegistry::open(&root, session).unwrap(),
             ProviderWorkspaceState::default(),
             true,
@@ -17471,7 +17587,7 @@ mod tests {
         let alpha_surface = first
             .open_workspace_terminal(
                 alpha.workspace,
-                Some("C:/explicit-alpha".into()),
+                Some(alpha_cwd.to_string_lossy().into_owned()),
                 Some((90, 30)),
             )
             .unwrap();
@@ -17481,13 +17597,21 @@ mod tests {
             let pane = state.resource_indexes.tab_pane[&alpha_surface.id];
             state.resource_indexes.pane_ids[&pane].to_string()
         });
+        first
+            .report_agent(
+                alpha_surface.id,
+                AgentState::Working,
+                AgentSource::Hook,
+                Some("claude:session-alpha".into()),
+            )
+            .unwrap();
         let alpha_second_surface =
             first.create_terminal_tab_in_public_pane(&alpha_pane, Some((90, 30))).unwrap();
         let beta = first.create_empty_workspace(Some("Beta".into()), None, None).unwrap();
         let beta_surface = first
             .open_workspace_terminal(
                 beta.workspace,
-                Some("C:/explicit-beta".into()),
+                Some(beta_cwd.to_string_lossy().into_owned()),
                 Some((100, 32)),
             )
             .unwrap();
@@ -17501,7 +17625,7 @@ mod tests {
 
         let reopened = Mux::from_workspace_registry(
             session.into(),
-            SurfaceOptions::default(),
+            options(),
             WorkspaceRegistry::open(&root, session).unwrap(),
             ProviderWorkspaceState::default(),
             true,
@@ -17520,13 +17644,8 @@ mod tests {
             assert!(state.surfaces.is_empty());
         });
         let restored_alpha = reopened.open_public_terminal_tab(&alpha_tab, Some((90, 30))).unwrap();
-        let restored_beta = reopened
-            .open_workspace_terminal(
-                beta.workspace,
-                Some("C:/must-not-replay".into()),
-                Some((100, 32)),
-            )
-            .unwrap();
+        let restored_beta =
+            reopened.open_workspace_terminal(beta.workspace, None, Some((100, 32))).unwrap();
         let restored_alpha_identity =
             reopened.resource_terminal_host_identity(&restored_alpha).unwrap();
         let restored_beta_identity =
@@ -17535,8 +17654,27 @@ mod tests {
         assert_eq!(restored_beta_identity.terminal_id, beta_identity.terminal_id);
         assert_ne!(restored_alpha_identity.incarnation, alpha_identity.incarnation);
         assert_ne!(restored_beta_identity.incarnation, beta_identity.incarnation);
-        assert_ne!(restored_alpha.spawn_cwd().as_deref(), Some("C:/explicit-alpha"));
-        assert_ne!(restored_beta.spawn_cwd().as_deref(), Some("C:/must-not-replay"));
+        assert_eq!(
+            restored_alpha.spawn_cwd().as_deref(),
+            Some(alpha_cwd.to_string_lossy().as_ref())
+        );
+        assert_eq!(restored_beta.spawn_cwd().as_deref(), Some(beta_cwd.to_string_lossy().as_ref()));
+        assert_eq!(
+            restored_alpha.spawn_argv().unwrap(),
+            vec![
+                "powershell.exe",
+                "-NoProfile",
+                "-ExecutionPolicy",
+                "Bypass",
+                "-File",
+                launcher.to_string_lossy().as_ref(),
+                "claude",
+                "--",
+                "--resume",
+                "session-alpha",
+            ]
+        );
+        assert_eq!(restored_beta.spawn_argv().unwrap(), vec![crate::platform::default_shell()]);
         let after =
             reopened.workspace_registry.lock().unwrap().resource_topology_snapshot().unwrap();
         assert_eq!(after.active_workspace, before.active_workspace);
@@ -18162,6 +18300,7 @@ mod tests {
                         incarnation: None,
                         lifecycle: TerminalLifecycle::Launching,
                         launch_spec: serde_json::json!({"command_present":true}),
+                        restart_cwd: None,
                         exit: None,
                     },
                     &serde_json::json!({"terminal_id":TERMINAL}),
@@ -23486,6 +23625,7 @@ mod tests {
                         incarnation: None,
                         lifecycle: TerminalLifecycle::Launching,
                         launch_spec: serde_json::json!({"command_present":true}),
+                        restart_cwd: None,
                         exit: None,
                     },
                     &serde_json::json!({"terminal_id":TERMINAL}),
@@ -23602,6 +23742,7 @@ mod tests {
             incarnation: None,
             lifecycle: TerminalLifecycle::Launching,
             launch_spec: serde_json::json!({"command":["/bin/sh"]}),
+            restart_cwd: None,
             exit: None,
         };
         {
@@ -23812,6 +23953,7 @@ mod tests {
                 incarnation: None,
                 lifecycle: TerminalLifecycle::Launching,
                 launch_spec: serde_json::json!({}),
+                restart_cwd: None,
                 exit: None,
             };
             commit_terminal_transition(
@@ -23889,6 +24031,7 @@ mod tests {
                 incarnation: None,
                 lifecycle: TerminalLifecycle::Launching,
                 launch_spec: serde_json::json!({}),
+                restart_cwd: None,
                 exit: None,
             },
         )
@@ -23965,6 +24108,7 @@ mod tests {
                 incarnation: None,
                 lifecycle: TerminalLifecycle::Launching,
                 launch_spec: serde_json::json!({"command_present":true}),
+                restart_cwd: None,
                 exit: None,
             };
             commit_terminal_transition(
@@ -24019,6 +24163,7 @@ mod tests {
                     incarnation: None,
                     lifecycle: TerminalLifecycle::Launching,
                     launch_spec: serde_json::json!({"command_present":true}),
+                    restart_cwd: None,
                     exit: None,
                 },
             )
@@ -24223,6 +24368,7 @@ mod tests {
                     incarnation: None,
                     lifecycle: TerminalLifecycle::Launching,
                     launch_spec: serde_json::json!({}),
+                    restart_cwd: None,
                     exit: None,
                 },
             )

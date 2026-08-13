@@ -190,6 +190,33 @@
   <data name="Terminal_Exited" xml:space="preserve">
     <value>exited</value>
   </data>
+  <data name="Agent_Session" xml:space="preserve">
+    <value>AI session</value>
+  </data>
+  <data name="Agent_Working" xml:space="preserve">
+    <value>working</value>
+  </data>
+  <data name="Agent_Blocked" xml:space="preserve">
+    <value>needs attention</value>
+  </data>
+  <data name="Agent_Idle" xml:space="preserve">
+    <value>idle</value>
+  </data>
+  <data name="Agent_Done" xml:space="preserve">
+    <value>done</value>
+  </data>
+  <data name="Agent_Unknown" xml:space="preserve">
+    <value>unknown</value>
+  </data>
+  <data name="Agent_NotificationBlocked" xml:space="preserve">
+    <value>The session needs your attention.</value>
+  </data>
+  <data name="Agent_NotificationDone" xml:space="preserve">
+    <value>The session finished.</value>
+  </data>
+  <data name="Agent_NotificationFocus" xml:space="preserve">
+    <value>Focus session</value>
+  </data>
   <data name="Pane_Browser" xml:space="preserve">
     <value>Browser</value>
   </data>

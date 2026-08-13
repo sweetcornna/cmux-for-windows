@@ -1,0 +1,5 @@
+{
+  "name": "cmux-windows-status",
+  "description": "Reports local Claude Code session state to cmux for Windows",
+  "version": "1.0.0"
+}

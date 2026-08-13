@@ -275,16 +275,42 @@ pub unsafe extern "C" fn cmux_mux_open_transient_named(
         return std::ptr::null_mut();
     };
     Box::into_raw(Box::new(CmuxMux {
-        mux: Mux::new(&name, SurfaceOptions::default()),
+        mux: Mux::new(&name, gui_surface_options()),
         last_error: Mutex::new(String::new()),
     }))
+}
+
+fn gui_surface_options() -> SurfaceOptions {
+    let mut options = SurfaceOptions::default();
+    let Ok(executable) = std::env::current_exe() else {
+        return options;
+    };
+    let Some(app_dir) = executable.parent() else {
+        return options;
+    };
+    let integration = app_dir.join("AgentIntegration");
+    let shims = integration.join("bin");
+    if !shims.is_dir() {
+        return options;
+    }
+    let path = std::env::var_os("PATH").unwrap_or_default();
+    let mut paths = vec![shims];
+    paths.extend(std::env::split_paths(&path));
+    if let Ok(path) = std::env::join_paths(paths) {
+        options.extra_env.push(("PATH".into(), path.to_string_lossy().into_owned()));
+    }
+    options.extra_env.push(("CMUX_GUI_EXE".into(), executable.to_string_lossy().into_owned()));
+    options
+        .extra_env
+        .push(("CMUX_AGENT_INTEGRATION_DIR".into(), integration.to_string_lossy().into_owned()));
+    options
 }
 
 fn open_mux(name: &str) -> *mut CmuxMux {
     let Some(root) = cmux_tui_core::platform::workspace_state_dir() else {
         return std::ptr::null_mut();
     };
-    match Mux::open_persistent(name, SurfaceOptions::default(), &root) {
+    match Mux::open_persistent(name, gui_surface_options(), &root) {
         Ok(mux) => Box::into_raw(Box::new(CmuxMux { mux, last_error: Mutex::new(String::new()) })),
         Err(_) => std::ptr::null_mut(),
     }
@@ -591,6 +617,49 @@ pub unsafe extern "C" fn cmux_mux_workspace_open(
         return std::ptr::null_mut();
     };
     session_from_surface(mux.mux.clone(), surface, cols, rows)
+}
+
+/// Update one terminal's durable relaunch working directory.
+///
+/// # Safety
+/// String pointers must reference their declared UTF-8 byte lengths. `cwd` may
+/// be null when `cwd_len` is zero.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn cmux_mux_terminal_set_restart_cwd(
+    mux: *mut CmuxMux,
+    terminal: *const u8,
+    terminal_len: usize,
+    cwd: *const u8,
+    cwd_len: usize,
+) -> i32 {
+    if mux.is_null() || (cwd.is_null() && cwd_len != 0) {
+        return CMUX_ERR_NULL;
+    }
+    let Ok(terminal) = (unsafe { required_utf8(terminal, terminal_len) }) else {
+        return CMUX_ERR_ENGINE;
+    };
+    let cwd = unsafe { optional_utf8(cwd, cwd_len) };
+    let mux = unsafe { &*mux };
+    match mux.mux.set_terminal_restart_cwd(&terminal, cwd.as_deref()) {
+        Ok(()) => 0,
+        Err(error) => mux.record_error(&error),
+    }
+}
+
+/// Persist local working directories used to relaunch terminal tabs.
+///
+/// # Safety
+/// `mux` must be live.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn cmux_mux_persist_restart_state(mux: *mut CmuxMux) -> i32 {
+    if mux.is_null() {
+        return CMUX_ERR_NULL;
+    }
+    let mux = unsafe { &*mux };
+    match mux.mux.persist_terminal_restart_state() {
+        Ok(()) => 0,
+        Err(error) => mux.record_error(&error),
+    }
 }
 
 /// Copy the authoritative public mux snapshot as UTF-8 JSON.
