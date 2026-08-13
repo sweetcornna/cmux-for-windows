@@ -6,6 +6,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ## [Unreleased]
 
+## [0.3.7] - 2026-08-12
+
 ### Added
 
 - Added local Claude Code, OpenCode, and Codex lifecycle integrations that display working, attention, idle, and completed state without reading terminal content.
