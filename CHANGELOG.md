@@ -6,6 +6,25 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ## [Unreleased]
 
+## [0.3.8] - 2026-08-13
+
+### Fixed
+
+- Kept terminal keyboard focus when an in-app agent notification appears, is dismissed, or focuses its session.
+- Restored ordinary English and other direct keyboard-layout characters while retaining committed IME text input, and preserved UTF-16 surrogate pairs plus `WM_UNICHAR` scalars for emoji and supplementary CJK.
+- Restored terminal wheel scrolling by rendering each WinUI view's local scrollback position and accumulating high-precision wheel deltas.
+- Fixed the Claude Code, OpenCode, and Codex launch shims and restored-session commands so Windows PowerShell preserves provider options and argument separators.
+- Fixed a startup failure that left no window at all: an unread agent notification whose terminal had since been closed made every later launch abandon the saved session. Such notifications now stay in the history without blocking the restore, and existing state recovers without being discarded.
+- Waited for the departing instance to hand over its workspace session instead of failing the launch, so relaunching while the previous window is still shutting down opens normally.
+- Reported a failed launch instead of vanishing: the engine now names why a session could not be opened, the app shows that reason and the log path, and unhandled exceptions reach the log.
+- Kept a launch that could not start its terminal, or a folder handed to an already-running window, from taking the whole app down.
+- Raised an already-running window from the taskbar when a second launch hands it a folder, rather than leaving it minimized.
+- Stopped concurrent cmux processes from silently dropping each other's log lines.
+
+### Changed
+
+- Slowed background topology polling while the window is inactive and stopped reallocating the snapshot buffer on every poll.
+
 ## [0.3.7] - 2026-08-12
 
 ### Added
