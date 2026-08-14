@@ -12,7 +12,7 @@ A native Windows terminal workspace built with WinUI 3, ConPTY, Rust, and Ghostt
 - Native WinUI 3 desktop interface for Windows 10 version 2004 or newer.
 - Real Windows pseudoterminals through ConPTY.
 - Workspaces, screens, draggable split panes, and terminal and WebView2 browser tabs.
-- Native keyboard, mouse, selection, clipboard, pane-focus, and pane-zoom interactions with uniformly sized compact action buttons and neutral pane borders.
+- Native keyboard, mouse, high-precision scrollback scrolling, selection, clipboard, pane-focus, and pane-zoom interactions with uniformly sized compact action buttons and neutral pane borders.
 - DirectWrite/Direct2D terminal rendering that shapes each Ghostty grapheme inside its assigned one- or two-cell grid span, including readable block cursors, selection colors, text blink, and color-font fallback.
 - Stable live terminal and browser controls during pane and workspace switches, topology polling, and split-layout changes, with inactive terminal rendering paused and selected terminals ready for input without a visual-tree reload gap.
 - Durable workspace topology and per-terminal working directories across app restarts; terminals use new ConPTY processes, while active Claude Code, OpenCode, and Codex sessions resume through their provider CLIs.
@@ -71,7 +71,7 @@ Only 64-bit Windows builds using Rust's `x86_64-pc-windows-gnu` target are suppo
 | Terminal | `Ctrl+V`, `Ctrl+Shift+V`, or `Shift+Insert` | Paste |
 | Terminal | `Ctrl+Shift+A` | Select all |
 
-Terminal applications continue to receive `Ctrl`, `Alt`, `Shift`, Windows/Super, function, navigation, numpad, system, international, and punctuation keys that do not exactly match an application shortcut. Right Alt/AltGr and Windows input methods remain available for Unicode text input. Application shortcuts work from terminal and WebView content, while text fields, Settings, and modal dialogs retain their own input.
+Terminal applications continue to receive any valid Unicode character from direct keyboard layouts, dead-key composition, AltGr, Windows input methods, and supplementary-plane input such as emoji and extended CJK, plus `Ctrl`, `Alt`, `Shift`, Windows/Super, function, navigation, numpad, system, international, and punctuation keys that do not exactly match an application shortcut. Switching between an English layout and an IME does not require refocusing the terminal. Application shortcuts work from terminal and WebView content, while text fields, Settings, and modal dialogs retain their own input.
 
 ## Install
 
@@ -103,7 +103,7 @@ The standalone multiplexer and resource CLI use the same Windows engine:
 .\cmux-tui.exe --session work terminal list
 ```
 
-The default shell is the first executable found from `pwsh.exe`, `powershell.exe`, and `cmd.exe`. In the Windows GUI, Claude Code, OpenCode, and Codex launched from terminal panes receive per-invocation local status hooks. cmux does not modify the providers' global user configuration and does not collect prompts, assistant responses, or terminal contents.
+The default shell is the first executable found from `pwsh.exe`, `powershell.exe`, and `cmd.exe`. In the Windows GUI, `claude`, `opencode`, and `codex` launched from terminal panes preserve their complete command-line arguments and receive per-invocation local status hooks. cmux does not modify the providers' global user configuration and does not collect prompts, assistant responses, or terminal contents.
 
 ## Build from source
 
@@ -135,6 +135,8 @@ The complete toolchain and the GNU-host linker requirement are documented in [De
 | Control sockets | `%TEMP%\cmux-tui-<user>` |
 
 Terminal keystrokes and pasted text are intentionally never written to the diagnostic log.
+
+Only one cmux process owns the workspace state at a time. A second launch hands its work to the running window; a launch started while the previous window is still shutting down waits for that handover. When a session cannot be opened at all, cmux reports the reason and the log path instead of exiting without a window.
 
 ## Documentation
 

@@ -80,6 +80,8 @@ public sealed partial class TerminalView : UserControl, IDisposable
     private readonly List<(string Chord, byte Action)> _pendingKeys = [];
     private readonly Dictionary<(VirtualKey Key, uint ScanCode, bool Extended), string>
         _structuredKeysDown = [];
+    private readonly UnicodeInputDecoder _unicodeInput = new();
+    private readonly WheelDeltaAccumulator _wheelDelta = new();
     private bool _suppressStructuredCharacter;
     private bool _postArrangeRefreshPending;
     private bool _canvasAttached;
@@ -871,19 +873,29 @@ public sealed partial class TerminalView : UserControl, IDisposable
         }
     }
 
-    internal bool ForwardCharacterReceived(uint keyCode)
+    internal bool ForwardUtf16Character(char value)
     {
-        var text = keyCode <= char.MaxValue
-            ? ((char)keyCode).ToString()
-            : keyCode <= 0x10FFFF
-                ? char.ConvertFromUtf32((int)keyCode)
-                : string.Empty;
+        if (!_hostActive)
+        {
+            return false;
+        }
+        var text = _unicodeInput.DecodeUtf16Unit(value);
+        return text.Length == 0 || HandleCharacterReceived(text);
+    }
+
+    internal bool ForwardUnicodeScalar(uint value)
+    {
+        if (!_hostActive)
+        {
+            return false;
+        }
+        var text = UnicodeInputDecoder.DecodeScalar(value);
         return text.Length > 0 && HandleCharacterReceived(text);
     }
 
     private void OnCharacterReceived(UIElement sender, CharacterReceivedRoutedEventArgs args)
     {
-        if (HandleCharacterReceived(args.Character.ToString()))
+        if (ForwardUtf16Character(args.Character))
         {
             args.Handled = true;
         }
@@ -899,10 +911,6 @@ public sealed partial class TerminalView : UserControl, IDisposable
         {
             _suppressStructuredCharacter = false;
             return true;
-        }
-        if (_textInputContext is not null && _textInputHasFocus)
-        {
-            return false;
         }
         Send(Encoding.UTF8.GetBytes(text));
         return true;
@@ -1212,6 +1220,7 @@ public sealed partial class TerminalView : UserControl, IDisposable
             SendKey(chord, 0);
         }
         _structuredKeysDown.Clear();
+        _unicodeInput.Reset();
         _suppressStructuredCharacter = false;
     }
 

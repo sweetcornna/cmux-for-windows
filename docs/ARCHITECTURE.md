@@ -56,6 +56,12 @@ Workspace topology and a bounded restart descriptor are durable; process state i
 
 The default shell search order is `pwsh.exe`, `powershell.exe`, then `cmd.exe`. Provider integration is scoped to GUI terminal child processes by a per-process `PATH` prefix and per-invocation plugin/hook configuration; it does not edit the user's global provider configuration. Completion and attention events create a durable cmux notification and a focusable notification bar inside the GUI; the application does not register or send Windows system notifications.
 
+A notification outlives the terminal that raised it. Restoring a session keeps such a notification in the history and drops only its terminal relationship, because the unread marker belongs to a terminal that no longer exists. Restore never treats that as corrupt state; a session that cannot be opened must not be the frontend's first sign of trouble, so the engine reports why and the GUI surfaces it.
+
+## Session ownership
+
+One process owns a durable workspace session at a time, held as a lock on `writer.lock` in the session directory. The lock outlives the window that opened it: a closing GUI keeps it until its terminals are gone and its registry is closed. A starting process therefore waits briefly for that handover rather than treating a busy session as fatal, which is what makes relaunching immediately after closing reliable.
+
 ## Browser lifecycle
 
 The Rust core owns each browser's stable resource ID, tab placement, current URL, and durable topology. The WinUI frontend owns the live WebView2 control and sends completed navigation URLs back through the same stable-ID mutation boundary. Browser controls are reused while topology is reconciled, so navigation history and page state survive unrelated sidebar and layout updates during the current process.

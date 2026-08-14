@@ -1,11 +1,10 @@
-param(
-    [Parameter(Mandatory = $true, Position = 0)]
-    [ValidateSet('claude', 'opencode', 'codex')]
-    [string]$Provider,
+if ($args.Count -eq 0 -or @('claude', 'opencode', 'codex') -notcontains $args[0]) {
+    Write-Error 'Expected claude, opencode, or codex as the first argument.'
+    exit 64
+}
 
-    [Parameter(ValueFromRemainingArguments = $true)]
-    [string[]]$ProviderArguments
-)
+$Provider = [string]$args[0]
+$ProviderArguments = if ($args.Count -gt 1) { @($args[1..($args.Count - 1)]) } else { @() }
 
 $shimDirectory = [System.IO.Path]::GetFullPath($PSScriptRoot).TrimEnd('\')
 $command = Get-Command $Provider -All -ErrorAction SilentlyContinue |
@@ -23,16 +22,8 @@ if (-not $command) {
 }
 
 $arguments = [System.Collections.Generic.List[string]]::new()
-$shimSeparator = $true
-if ($ProviderArguments) {
-    foreach ($argument in $ProviderArguments) {
-        if ($shimSeparator -and $argument -eq '--') {
-            $shimSeparator = $false
-            continue
-        }
-        $shimSeparator = $false
-        $arguments.Add($argument)
-    }
+foreach ($argument in $ProviderArguments) {
+    $arguments.Add($argument)
 }
 
 $integration = $env:CMUX_AGENT_INTEGRATION_DIR

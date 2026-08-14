@@ -564,10 +564,15 @@ internal sealed class WorkspaceView : UserControl, IDisposable
         && IsLoaded
         && _selectedTerminal?.ForwardKeyUp(key, status) == true;
 
-    public bool ForwardCharacterReceived(uint keyCode) =>
+    public bool ForwardUtf16Character(char value) =>
         _hostActive
         && IsLoaded
-        && _selectedTerminal?.ForwardCharacterReceived(keyCode) == true;
+        && _selectedTerminal?.ForwardUtf16Character(value) == true;
+
+    public bool ForwardUnicodeScalar(uint value) =>
+        _hostActive
+        && IsLoaded
+        && _selectedTerminal?.ForwardUnicodeScalar(value) == true;
 
     public void ForwardKeyDown(KeyRoutedEventArgs args)
     {

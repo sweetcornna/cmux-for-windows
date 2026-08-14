@@ -7,5 +7,12 @@
   </PropertyGroup>
   <ItemGroup>
     <Compile Include="..\CmuxGui\Input\ShortcutDefinitions.cs" Link="ShortcutDefinitions.cs" />
+    <Compile Include="..\CmuxGui\Input\UnicodeInputDecoder.cs" Link="UnicodeInputDecoder.cs" />
+    <Compile Include="..\CmuxGui\Input\WheelDeltaAccumulator.cs" Link="WheelDeltaAccumulator.cs" />
+    <None Include="..\CmuxGui\MainWindow.xaml" Link="MainWindow.xaml" CopyToOutputDirectory="PreserveNewest" />
+    <None Include="..\CmuxGui\Controls\TerminalView.cs" Link="TerminalView.cs" CopyToOutputDirectory="PreserveNewest" />
+    <None Include="..\CmuxGui\AgentIntegration\bin\*.cmd" Link="AgentIntegration\bin\%(Filename)%(Extension)" CopyToOutputDirectory="PreserveNewest" />
+    <None Include="..\CmuxGui\AgentIntegration\bin\invoke-provider.ps1" Link="AgentIntegration\bin\invoke-provider.ps1" CopyToOutputDirectory="PreserveNewest" />
+    <None Include="..\..\cmux-tui\crates\cmux-ffi\src\lib.rs" Link="CmuxFfi.rs" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
 </Project>

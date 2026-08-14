@@ -32,7 +32,7 @@ pub const CMUX_NO_COLOR: u32 = 0xFFFF_FFFF;
 
 /// One terminal cell, flattened for cross-language consumption.
 #[repr(C)]
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Default)]
 pub struct CmuxCell {
     /// Unicode scalar value, or 0 for a blank cell.
     pub ch: u32,
@@ -54,7 +54,7 @@ pub struct CmuxCell {
 
 /// Frame-level state accompanying a cell snapshot.
 #[repr(C)]
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Default)]
 pub struct CmuxFrame {
     pub cols: u16,
     pub rows: u16,
@@ -306,14 +306,62 @@ fn gui_surface_options() -> SurfaceOptions {
     options
 }
 
+/// Why the most recent open failed.
+///
+/// A failed open hands the caller a bare null pointer, which cannot distinguish
+/// a session another process still owns from state that will never load. The
+/// frontend has no window yet at that point, so without this the only symptom
+/// is a process that exits before it can report anything.
+static LAST_OPEN_ERROR: Mutex<String> = Mutex::new(String::new());
+
+fn record_open_error(detail: &str) {
+    let mut slot = LAST_OPEN_ERROR.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+    slot.clear();
+    slot.push_str(detail);
+}
+
 fn open_mux(name: &str) -> *mut CmuxMux {
     let Some(root) = cmux_tui_core::platform::workspace_state_dir() else {
+        record_open_error("no durable workspace state directory is available");
         return std::ptr::null_mut();
     };
     match Mux::open_persistent(name, gui_surface_options(), &root) {
-        Ok(mux) => Box::into_raw(Box::new(CmuxMux { mux, last_error: Mutex::new(String::new()) })),
-        Err(_) => std::ptr::null_mut(),
+        Ok(mux) => {
+            record_open_error("");
+            Box::into_raw(Box::new(CmuxMux { mux, last_error: Mutex::new(String::new()) }))
+        }
+        Err(error) => {
+            record_open_error(&format!("{error:#}"));
+            std::ptr::null_mut()
+        }
     }
+}
+
+/// Copy the reason the most recent mux open failed, as UTF-8.
+///
+/// Calling with a null `buffer` and zero `capacity` returns the required byte
+/// count. An empty result means the last open succeeded.
+///
+/// # Safety
+/// A non-null `buffer` must be writable for `capacity` bytes.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn cmux_last_open_error(buffer: *mut u8, capacity: usize) -> i32 {
+    if buffer.is_null() && capacity != 0 {
+        return CMUX_ERR_NULL;
+    }
+    let error = LAST_OPEN_ERROR.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+    let bytes = error.as_bytes();
+    let Ok(written) = i32::try_from(bytes.len()) else {
+        return CMUX_ERR_ENGINE;
+    };
+    if buffer.is_null() {
+        return written;
+    }
+    if bytes.len() > capacity {
+        return CMUX_ERR_CAPACITY;
+    }
+    unsafe { std::ptr::copy_nonoverlapping(bytes.as_ptr(), buffer, bytes.len()) };
+    written
 }
 
 /// Release a mux created by [`cmux_mux_open`].
@@ -1285,13 +1333,11 @@ pub unsafe extern "C" fn cmux_session_snapshot(
     }
     let session = unsafe { &mut *session };
 
-    if session.surface.snapshot(&mut session.render).is_err() {
-        return CMUX_ERR_ENGINE;
-    }
-    let Ok(built) = session.render.build_frame() else {
+    let Ok(rendered) = session.surface.render_view_frame(&mut session.render) else {
         return CMUX_ERR_ENGINE;
     };
     session.render.set_clean();
+    let built = &rendered.frame;
 
     let rows = built.styled_rows();
     let grid_rows = rows.len();
@@ -1385,6 +1431,19 @@ mod tests {
         bytes
     }
 
+    unsafe fn snapshot_text(session: *mut CmuxSession) -> String {
+        let capacity = unsafe { usize::from((*session).cols) * usize::from((*session).rows) };
+        let mut cells = vec![CmuxCell::default(); capacity];
+        let mut frame = CmuxFrame::default();
+        let written =
+            unsafe { cmux_session_snapshot(session, cells.as_mut_ptr(), cells.len(), &mut frame) };
+        assert!(written >= 0);
+        cells[..written as usize]
+            .iter()
+            .map(|cell| char::from_u32(cell.ch).unwrap_or(' '))
+            .collect()
+    }
+
     #[test]
     fn terminal_frame_abi_layout_is_stable() {
         assert_eq!(size_of::<CmuxCell>(), 52);
@@ -1395,6 +1454,31 @@ mod tests {
         assert_eq!(offset_of!(CmuxFrame, default_fg), 12);
         assert_eq!(size_of::<CmuxPresentation>(), 8);
         assert_eq!(offset_of!(CmuxPresentation, selection_fg), 4);
+    }
+
+    #[test]
+    fn native_snapshot_follows_the_session_view_scrollback() {
+        let mux = Mux::new("cmux-ffi-scrollback", SurfaceOptions::default());
+        let surface = mux.new_tab(None, None, Some((12, 4))).unwrap();
+        surface.with_terminal(|terminal| {
+            terminal.vt_write(
+                b"old-00\r\nold-01\r\nold-02\r\nold-03\r\nold-04\r\nnew-05\r\nnew-06\r\nnew-07",
+            );
+        });
+        let session = session_from_surface(mux, surface, 12, 4);
+        assert!(!session.is_null());
+
+        let bottom = unsafe { snapshot_text(session) };
+        assert!(bottom.contains("new-07"), "{bottom:?}");
+        assert_eq!(unsafe { cmux_session_scroll(session, -4) }, 0);
+        let older = unsafe { snapshot_text(session) };
+        assert!(older.contains("old-02"), "{older:?}");
+        assert!(!older.contains("new-07"), "{older:?}");
+        assert_eq!(unsafe { cmux_session_scroll_to_bottom(session) }, 0);
+        let restored = unsafe { snapshot_text(session) };
+        assert!(restored.contains("new-07"), "{restored:?}");
+
+        unsafe { cmux_session_free(session) };
     }
 
     #[test]

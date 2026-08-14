@@ -217,6 +217,12 @@
   <data name="Agent_NotificationFocus" xml:space="preserve">
     <value>Focus session</value>
   </data>
+  <data name="Startup_FailedTitle" xml:space="preserve">
+    <value>cmux could not start</value>
+  </data>
+  <data name="Startup_FailedBody" xml:space="preserve">
+    <value>The terminal engine could not be opened, so no window was created. The details below were also written to the log.</value>
+  </data>
   <data name="Pane_Browser" xml:space="preserve">
     <value>Browser</value>
   </data>

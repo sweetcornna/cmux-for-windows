@@ -32,17 +32,18 @@ pub(super) fn restore_public_projections(
                 .or_else(|| state.terminal_catalog.get(terminal_id).map(|surface| surface.id))
         });
         let level = notification_level(&notification.level)?;
-        if notification.unread {
-            let terminal_id = notification
-                .terminal_id
-                .clone()
-                .context("terminal notification omitted its terminal identity")?;
-            if surface.is_some() {
-                terminal_notifications.insert(
-                    terminal_id,
-                    SurfaceNotification { notification: numeric_id, level, unread: true },
-                );
-            }
+        // A notification outlives the terminal that raised it. Once that
+        // terminal stops being live the registry keeps the ledger entry but
+        // strips `terminal_id`, so there is no surface left to badge. Such an
+        // entry stays historical instead of failing the whole session open.
+        if notification.unread
+            && let Some(terminal_id) = notification.terminal_id.clone()
+            && surface.is_some()
+        {
+            terminal_notifications.insert(
+                terminal_id,
+                SurfaceNotification { notification: numeric_id, level, unread: true },
+            );
         }
         notification_ledger.push_back(ResourceNotification {
             id: notification.id,
@@ -192,8 +193,12 @@ mod tests {
         mux.shutdown();
     }
 
+    // `WorkspaceRegistry::public_projections` strips `terminal_id` from every
+    // notification whose terminal is no longer live, so an unread notification
+    // without one is ordinary restored state, not corruption. Rejecting it made
+    // a closed agent terminal permanently unopenable.
     #[test]
-    fn unread_projection_without_terminal_identity_is_rejected() {
+    fn unread_projection_without_terminal_identity_stays_historical() {
         let projections = RegistryPublicProjections {
             notifications: vec![RegistryNotificationProjection {
                 id: NotificationPublicId::parse("notification_00000000000000000000000000000002")
@@ -210,8 +215,11 @@ mod tests {
             frontend_projections: Vec::new(),
         };
 
-        let error = restore_public_projections(&empty_state(), projections).unwrap_err();
-        assert!(error.to_string().contains("omitted its terminal identity"));
+        let restored = restore_public_projections(&empty_state(), projections).unwrap();
+        assert_eq!(restored.notification_ledger.len(), 1);
+        assert_eq!(restored.notification_ledger[0].terminal_id, None);
+        assert_eq!(restored.notification_ledger[0].surface, None);
+        assert!(restored.terminal_notifications.is_empty());
     }
 
     #[test]

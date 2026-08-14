@@ -2,6 +2,7 @@ using System;
 using System.IO;
 using System.IO.Pipes;
 using System.Linq;
+using System.Runtime.InteropServices;
 using System.Text;
 using System.Text.Json;
 using System.Threading;
@@ -64,6 +65,11 @@ public partial class App : Application
 
         ParseCommandLine();
         InitializeComponent();
+        // WinUI turns an unhandled exception into a stowed exception with no
+        // console and no window, which is indistinguishable from the app never
+        // having been launched. Name the culprit before the process dies.
+        UnhandledException += (_, args) =>
+            Diag.Log($"unhandled exception: {args.Exception}");
     }
 
     internal static void InitializeAccentBrush()
@@ -174,7 +180,18 @@ public partial class App : Application
             persistentSession = false;
         }
 
-        var window = new MainWindow(sessionName, LaunchFolder, persistentSession);
+        MainWindow window;
+        try
+        {
+            window = new MainWindow(sessionName, LaunchFolder, persistentSession);
+        }
+        catch (Exception ex)
+        {
+            ReportStartupFailure(ex);
+            Environment.ExitCode = 1;
+            Exit();
+            return;
+        }
         _window = window;
         MainWindowHandle = WinRT.Interop.WindowNative.GetWindowHandle(window);
         window.Closed += OnMainWindowClosed;
@@ -185,6 +202,37 @@ public partial class App : Application
             _ = ListenForActivationsAsync(window, _activationCancellation.Token);
         }
     }
+
+    /// <summary>
+    /// Surface a startup failure the only way a windowless app can.
+    ///
+    /// This runs before the first window exists, so a <c>ContentDialog</c> has
+    /// no <c>XamlRoot</c> to attach to. Without a message box the process simply
+    /// vanishes, which reads as "the app did not launch" with nothing to act on.
+    /// </summary>
+    private static void ReportStartupFailure(Exception error)
+    {
+        Diag.Log($"startup failed: {error}");
+        try
+        {
+            MessageBox(
+                IntPtr.Zero,
+                $"{Loc.S("Startup_FailedBody")}{Environment.NewLine}{Environment.NewLine}"
+                    + $"{error.Message}{Environment.NewLine}{Environment.NewLine}{Diag.Path}",
+                Loc.S("Startup_FailedTitle"),
+                MessageBoxIconError | MessageBoxSetForeground);
+        }
+        catch (Exception ex)
+        {
+            Diag.Log($"startup failure report failed: {ex.Message}");
+        }
+    }
+
+    private const uint MessageBoxIconError = 0x00000010;
+    private const uint MessageBoxSetForeground = 0x00010000;
+
+    [DllImport("user32.dll", CharSet = CharSet.Unicode, EntryPoint = "MessageBoxW")]
+    private static extern int MessageBox(IntPtr window, string text, string caption, uint type);
 
     private static string ActivationPipeName => $"cmux-for-windows-{Environment.UserName}";
 
@@ -284,7 +332,17 @@ public partial class App : Application
             }
             catch (Exception ex)
             {
+                // A pipe name another process still owns fails on every attempt,
+                // so retrying immediately would spin a core and flood the log.
                 Diag.Log($"activation listener failed: {ex.Message}");
+                try
+                {
+                    await Task.Delay(TimeSpan.FromSeconds(1), cancellationToken);
+                }
+                catch (OperationCanceledException)
+                {
+                    return;
+                }
             }
         }
     }

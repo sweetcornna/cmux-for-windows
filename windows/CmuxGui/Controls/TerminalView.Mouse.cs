@@ -239,9 +239,10 @@ public sealed partial class TerminalView
             return;
         }
         var delta = e.GetCurrentPoint(_canvas).Properties.MouseWheelDelta;
-        var rows = -(delta / 120) * 3;
+        var rows = _wheelDelta.Add(delta);
         if (rows == 0)
         {
+            e.Handled = true;
             return;
         }
         var cell = CellAt(e);

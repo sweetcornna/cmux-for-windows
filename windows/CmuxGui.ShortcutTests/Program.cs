@@ -1,3 +1,5 @@
+using System.Diagnostics;
+using System.Xml.Linq;
 using CmuxGui.Input;
 
 static void Check(bool condition, string message)
@@ -20,6 +22,61 @@ static ShortcutMatch Match(
     Check(match.Action == action, $"{match.Label} matched {match.Action}, expected {action}");
     Check(match.Index == index, $"{match.Label} index {match.Index}, expected {index}");
     return match;
+}
+
+static void ValidateProviderLauncher()
+{
+    var shimDirectory = Path.Combine(AppContext.BaseDirectory, "AgentIntegration", "bin");
+    foreach (var provider in new[] { "claude", "opencode", "codex" })
+    {
+        var shim = File.ReadAllText(Path.Combine(shimDirectory, $"{provider}.cmd"));
+        Check(!shim.Contains($" {provider} -- %*", StringComparison.Ordinal),
+            $"{provider} shim must not pass a bare PowerShell separator");
+    }
+
+    var root = Path.Combine(Path.GetTempPath(), $"cmux-provider-launcher-{Guid.NewGuid():N}");
+    var providerDirectory = Path.Combine(root, "providers");
+    Directory.CreateDirectory(providerDirectory);
+    try
+    {
+        var capture = Path.Combine(root, "arguments.txt");
+        File.WriteAllText(Path.Combine(providerDirectory, "claude.cmd"),
+            "@echo off\r\n> \"%CMUX_PROVIDER_CAPTURE%\" (\r\n  for %%A in (%*) do echo(%%~A\r\n)\r\n");
+        var runner = Path.Combine(root, "run.cmd");
+        File.WriteAllText(runner,
+            $"@call \"{Path.Combine(shimDirectory, "claude.cmd")}\" -p \"two words\" -- --version\r\n@exit /b %errorlevel%\r\n");
+
+        var start = new ProcessStartInfo
+        {
+            FileName = Environment.GetEnvironmentVariable("ComSpec") ?? "cmd.exe",
+            UseShellExecute = false,
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+            CreateNoWindow = true,
+        };
+        start.ArgumentList.Add("/d");
+        start.ArgumentList.Add("/c");
+        start.ArgumentList.Add(runner);
+        start.Environment["PATH"] = string.Join(Path.PathSeparator,
+            shimDirectory,
+            providerDirectory,
+            Environment.GetEnvironmentVariable("PATH"));
+        start.Environment["CMUX_PROVIDER_CAPTURE"] = capture;
+        start.Environment.Remove("CMUX_AGENT_INTEGRATION_DIR");
+
+        using var process = Process.Start(start)
+            ?? throw new InvalidOperationException("Provider launcher test process did not start");
+        var output = process.StandardOutput.ReadToEnd();
+        var error = process.StandardError.ReadToEnd();
+        Check(process.WaitForExit(10_000), "Provider launcher test timed out");
+        Check(process.ExitCode == 0, $"Provider launcher failed: {output}{error}");
+        Check(File.ReadAllLines(capture).SequenceEqual(new[] { "-p", "two words", "--", "--version" }),
+            "Provider launcher must preserve short options, quoted values, and separators");
+    }
+    finally
+    {
+        Directory.Delete(root, true);
+    }
 }
 
 var errors = ShortcutDefinitions.ValidateDefinitions();
@@ -155,4 +212,63 @@ foreach (var action in allActions.Where(action => action.ToString().StartsWith("
         $"{action} must be protected and marked destructive");
 }
 
-Console.WriteLine($"Validated {expected.Length} bindings for {allActions.Length} shortcut actions.");
+var mainWindow = XDocument.Load(Path.Combine(AppContext.BaseDirectory, "MainWindow.xaml"));
+static XElement Named(XDocument document, string name) =>
+    document.Descendants().Single(element => element.Attributes().Any(attribute =>
+        attribute.Name.LocalName == "Name" && attribute.Value == name));
+
+var notification = Named(mainWindow, "AgentNotificationCard");
+Check(notification.Name.LocalName == "Border", "Agent notifications must not use a focus-navigating control");
+foreach (var name in new[] { "AgentNotificationFocusButton", "AgentNotificationCloseButton" })
+{
+    var button = Named(mainWindow, name);
+    Check((string?)button.Attribute("IsTabStop") == "False", $"{name} must not enter tab focus");
+    Check((string?)button.Attribute("AllowFocusOnInteraction") == "False",
+        $"{name} must not steal terminal focus on interaction");
+}
+
+var unicode = new UnicodeInputDecoder();
+Check(unicode.DecodeUtf16Unit('A') == "A", "ASCII UTF-16 input must be preserved");
+Check(unicode.DecodeUtf16Unit('é') == "é", "accented UTF-16 input must be preserved");
+Check(unicode.DecodeUtf16Unit('中') == "中", "BMP CJK UTF-16 input must be preserved");
+Check(unicode.DecodeUtf16Unit('\u0301') == "\u0301", "combining marks must be preserved");
+Check(unicode.DecodeUtf16Unit('\u200D') == "\u200D", "zero-width joiners must be preserved");
+Check(unicode.DecodeUtf16Unit('\uFE0F') == "\uFE0F", "variation selectors must be preserved");
+Check(unicode.DecodeUtf16Unit('\uD83D').Length == 0, "a high surrogate must wait for its pair");
+Check(unicode.DecodeUtf16Unit('\uDE00') == "😀", "an emoji surrogate pair must stay intact");
+Check(unicode.DecodeUtf16Unit('\uDC00').Length == 0, "an isolated low surrogate must be rejected");
+unicode.DecodeUtf16Unit('\uD840');
+unicode.Reset();
+Check(unicode.DecodeUtf16Unit('x') == "x", "reset must discard an incomplete surrogate pair");
+Check(UnicodeInputDecoder.DecodeScalar(0x1F642) == "🙂", "WM_UNICHAR emoji must be preserved");
+Check(UnicodeInputDecoder.DecodeScalar(0x20000) == "𠀀", "supplementary CJK must be preserved");
+Check(UnicodeInputDecoder.DecodeScalar(0xD800).Length == 0, "surrogate scalar values must be rejected");
+Check(UnicodeInputDecoder.DecodeScalar(0x110000).Length == 0, "out-of-range Unicode must be rejected");
+
+var wheel = new WheelDeltaAccumulator();
+Check(wheel.Add(30) == 0, "partial wheel input must wait for a complete notch");
+Check(wheel.Add(30) == 0, "partial wheel input must be retained");
+Check(wheel.Add(30) == 0, "partial wheel input must not scroll early");
+Check(wheel.Add(30) == -3, "four quarter-notch wheel inputs must scroll toward older output");
+Check(wheel.Add(-60) == 0, "reverse partial wheel input must be retained");
+Check(wheel.Add(-60) == 3, "two reverse half-notches must scroll toward newer output");
+Check(wheel.Add(240) == -6, "multiple wheel notches must preserve their row count");
+
+var cmuxFfi = File.ReadAllText(Path.Combine(AppContext.BaseDirectory, "CmuxFfi.rs"));
+Check(cmuxFfi.Contains("surface.render_view_frame(&mut session.render)", StringComparison.Ordinal),
+    "GUI snapshots must render the terminal view's local scrollback offset");
+ValidateProviderLauncher();
+
+var terminalView = File.ReadAllText(Path.Combine(AppContext.BaseDirectory, "TerminalView.cs"));
+var characterHandlerStart = terminalView.IndexOf("private bool HandleCharacterReceived", StringComparison.Ordinal);
+var keyHandlerStart = terminalView.IndexOf("private void OnKeyDown", characterHandlerStart, StringComparison.Ordinal);
+Check(characterHandlerStart >= 0 && keyHandlerStart > characterHandlerStart,
+    "Terminal character handler could not be located");
+var characterHandler = terminalView[characterHandlerStart..keyHandlerStart];
+Check(!characterHandler.Contains("_textInputHasFocus", StringComparison.Ordinal),
+    "CoreText focus must not suppress direct keyboard-layout characters");
+Check(characterHandler.Contains("Send(Encoding.UTF8.GetBytes(text))", StringComparison.Ordinal),
+    "Direct keyboard-layout characters must reach the terminal");
+
+Console.WriteLine(
+    $"Validated {expected.Length} bindings for {allActions.Length} shortcut actions, notification focus isolation, full Unicode character input, and precision wheel scrolling.");

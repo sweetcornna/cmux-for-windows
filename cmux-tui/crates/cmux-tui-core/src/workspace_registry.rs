@@ -3145,14 +3145,33 @@ struct SessionLease {
 }
 
 impl SessionLease {
+    /// How long a fresh owner waits for a departing one to release the lease.
+    ///
+    /// The lease outlives the frontend window that owned it: a closing GUI
+    /// still has to tear down its terminals and close this database. Relaunching
+    /// during that teardown is ordinary use, so the new owner waits for the
+    /// handover rather than failing the open outright.
+    const HANDOVER_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(5);
+    const HANDOVER_POLL: std::time::Duration = std::time::Duration::from_millis(25);
+
     fn acquire(path: &Path) -> anyhow::Result<Self> {
         let file =
             OpenOptions::new().create(true).truncate(false).read(true).write(true).open(path)?;
         platform::restrict_file(path)?;
-        FileExt::try_lock(&file).with_context(|| {
-            format!("workspace session is already owned by another daemon: {}", path.display())
-        })?;
-        Ok(Self { file, path: path.to_path_buf() })
+        let deadline = std::time::Instant::now() + Self::HANDOVER_TIMEOUT;
+        loop {
+            let contended = match FileExt::try_lock(&file) {
+                Ok(()) => return Ok(Self { file, path: path.to_path_buf() }),
+                Err(error) => error,
+            };
+            if std::time::Instant::now() >= deadline {
+                return Err(anyhow::Error::new(contended).context(format!(
+                    "workspace session is already owned by another daemon: {}",
+                    path.display()
+                )));
+            }
+            std::thread::sleep(Self::HANDOVER_POLL);
+        }
     }
 }
 

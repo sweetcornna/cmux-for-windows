@@ -26,9 +26,22 @@ public sealed partial class MainWindow : Window
     private const uint WmSysKeyDown = 0x0104;
     private const uint WmSysKeyUp = 0x0105;
     private const uint WmSysChar = 0x0106;
+    private const uint WmUniChar = 0x0109;
+    private const uint UnicodeNoChar = 0xFFFF;
     private const uint WmLeftButtonDown = 0x0201;
     private const int WhMouseLl = 14;
-    private const uint WindowSubclassId = 1;
+    private const uint InputSiteSubclassId = 1;
+    private const uint MainWindowSubclassId = 2;
+
+    /// <summary>
+    /// Topology poll cadence while the window has focus.
+    ///
+    /// Each poll serializes the whole engine topology to JSON and parses it, so
+    /// a background window paying the foreground rate burns work nobody can see.
+    /// The slower background cadence still converges on external changes.
+    /// </summary>
+    private static readonly TimeSpan ForegroundTopologyInterval = TimeSpan.FromMilliseconds(750);
+    private static readonly TimeSpan BackgroundTopologyInterval = TimeSpan.FromMilliseconds(3000);
 
     private delegate IntPtr WindowSubclassProc(
         IntPtr window,
@@ -79,7 +92,8 @@ public sealed partial class MainWindow : Window
     private WorkspaceView? _workspaceInputTarget;
     private bool _workspaceInputBridgeActive;
     private bool _workspacePointerDown;
-    private readonly WindowSubclassProc _windowSubclassProc;
+    private readonly WindowSubclassProc _inputSiteSubclassProc;
+    private readonly WindowSubclassProc _mainWindowSubclassProc;
     private readonly LowLevelMouseProc _lowLevelMouseProc;
     private IntPtr _windowHandle;
     private IntPtr _inputSiteHandle;
@@ -103,7 +117,8 @@ public sealed partial class MainWindow : Window
     public MainWindow(string sessionName, string? launchFolder, bool persistentSession = true)
     {
         InitializeComponent();
-        _windowSubclassProc = HandleWindowMessage;
+        _inputSiteSubclassProc = HandleWindowMessage;
+        _mainWindowSubclassProc = HandleMainWindowMessage;
         _lowLevelMouseProc = HandleLowLevelMouse;
         _windowHandle = WinRT.Interop.WindowNative.GetWindowHandle(this);
         WorkspaceHost.Content = _workspaceViewsHost;
@@ -111,6 +126,14 @@ public sealed partial class MainWindow : Window
         NewWorkspaceButton.Foreground = App.AccentBrush;
         _launchFolder = launchFolder;
         _mux = MuxRuntime.Open(sessionName, persistentSession);
+        if (!SetWindowSubclass(
+                _windowHandle,
+                _mainWindowSubclassProc,
+                new UIntPtr(MainWindowSubclassId),
+                UIntPtr.Zero))
+        {
+            Diag.Log($"main window subclass failed: {Marshal.GetLastWin32Error()}");
+        }
 
         ExtendsContentIntoTitleBar = true;
         SetTitleBar(AppTitleBar);
@@ -134,11 +157,36 @@ public sealed partial class MainWindow : Window
         NavSearch.TextChanged += OnNavSearchChanged;
         _inputBridgeTimer.Interval = TimeSpan.FromMilliseconds(300);
         _inputBridgeTimer.Tick += OnInputBridgeTimerTick;
-        _topologyTimer.Interval = TimeSpan.FromMilliseconds(750);
+        _topologyTimer.Interval = ForegroundTopologyInterval;
         _topologyTimer.Tick += OnTopologyTick;
 
         RestoreWorkspaces();
         _topologyTimer.Start();
+    }
+
+    private IntPtr HandleMainWindowMessage(
+        IntPtr window,
+        uint message,
+        IntPtr wParam,
+        IntPtr lParam,
+        UIntPtr subclassId,
+        UIntPtr referenceData)
+    {
+        if (message == WmUniChar)
+        {
+            var value = (uint)wParam.ToInt64();
+            if (value == UnicodeNoChar)
+            {
+                return new IntPtr(1);
+            }
+            if (_visibleWorkspace is { } target
+                && AcceptsApplicationInput(target)
+                && target.ForwardUnicodeScalar(value))
+            {
+                return IntPtr.Zero;
+            }
+        }
+        return DefSubclassProc(window, message, wParam, lParam);
     }
 
     private IntPtr HandleWindowMessage(
@@ -156,12 +204,16 @@ public sealed partial class MainWindow : Window
                 : null;
         var acceptsApplicationInput = activeTarget is { } candidateTarget
             && AcceptsApplicationInput(candidateTarget);
-        if (message is WmChar or WmSysChar && _bridgeCharacterKey is not null)
+        if (message == WmUniChar && (uint)wParam.ToInt64() == UnicodeNoChar)
+        {
+            return new IntPtr(1);
+        }
+        if (message is WmChar or WmSysChar or WmUniChar && _bridgeCharacterKey is not null)
         {
             _bridgeCharacterKey = null;
             return IntPtr.Zero;
         }
-        if (message is WmChar or WmSysChar)
+        if (message is WmChar or WmSysChar or WmUniChar)
         {
             _bridgeCharacterKey = null;
         }
@@ -212,10 +264,20 @@ public sealed partial class MainWindow : Window
             }
             else if (message is WmChar or WmSysChar)
             {
-                var keyCode = (uint)wParam.ToInt64();
+                var value = (char)(uint)wParam.ToInt64();
                 if (_nativePaneInputTarget is { } terminal
-                    ? terminal.ForwardCharacterReceived(keyCode)
-                    : target.ForwardCharacterReceived(keyCode))
+                    ? terminal.ForwardUtf16Character(value)
+                    : target.ForwardUtf16Character(value))
+                {
+                    return IntPtr.Zero;
+                }
+            }
+            else if (message == WmUniChar)
+            {
+                var value = (uint)wParam.ToInt64();
+                if (_nativePaneInputTarget is { } terminal
+                    ? terminal.ForwardUnicodeScalar(value)
+                    : target.ForwardUnicodeScalar(value))
                 {
                     return IntPtr.Zero;
                 }
@@ -500,8 +562,8 @@ public sealed partial class MainWindow : Window
 
         if (!SetWindowSubclass(
                 candidate,
-                _windowSubclassProc,
-                new UIntPtr(WindowSubclassId),
+                _inputSiteSubclassProc,
+                new UIntPtr(InputSiteSubclassId),
                 UIntPtr.Zero))
         {
             Diag.Log($"window input subclass failed: {Marshal.GetLastWin32Error()}");
@@ -514,8 +576,8 @@ public sealed partial class MainWindow : Window
         {
             RemoveWindowSubclass(
                 previous,
-                _windowSubclassProc,
-                new UIntPtr(WindowSubclassId));
+                _inputSiteSubclassProc,
+                new UIntPtr(InputSiteSubclassId));
         }
         Diag.Log("window input subclass installed");
     }
@@ -602,11 +664,13 @@ public sealed partial class MainWindow : Window
         if (e.WindowActivationState == WindowActivationState.Deactivated)
         {
             _windowActivated = false;
+            SetTopologyInterval(BackgroundTopologyInterval);
             ClearBridgeCharacterKey();
             RemoveMouseHook();
             return;
         }
         _windowActivated = true;
+        SetTopologyInterval(ForegroundTopologyInterval);
         EnsureInputSiteSubclass();
         EnsureMouseHook();
         DispatcherQueue.TryEnqueue(() =>
@@ -615,6 +679,15 @@ public sealed partial class MainWindow : Window
             EnsureMouseHook();
         });
         FocusSelectedTerminal("window-activated");
+    }
+
+    private void SetTopologyInterval(TimeSpan interval)
+    {
+        if (_closed || _topologyTimer.Interval == interval)
+        {
+            return;
+        }
+        _topologyTimer.Interval = interval;
     }
 
     private void FocusSelectedTerminal(string reason)
@@ -775,12 +848,16 @@ public sealed partial class MainWindow : Window
             .DefaultIfEmpty()
             .Max();
 
+        // A terminal that refuses to start is not a reason to abandon the
+        // launch: throwing here happens before the window exists, so the whole
+        // app would die with nothing on screen. An empty workspace still lets
+        // the user open a terminal by hand.
         if (!string.IsNullOrWhiteSpace(_launchFolder))
         {
             var workspace = _mux.CreateWorkspace(NextWorkspaceTitle());
             if (!_mux.CreateTerminal(workspace.PublicId, _launchFolder))
             {
-                throw new InvalidOperationException("The Explorer workspace terminal could not be created.");
+                Diag.Log($"Explorer workspace terminal creation failed: {workspace.PublicId}");
             }
             workspaces = _mux.Workspaces();
         }
@@ -789,7 +866,7 @@ public sealed partial class MainWindow : Window
             var workspace = _mux.CreateWorkspace(NextWorkspaceTitle());
             if (!_mux.CreateTerminal(workspace.PublicId))
             {
-                throw new InvalidOperationException("The initial workspace terminal could not be created.");
+                Diag.Log($"initial workspace terminal creation failed: {workspace.PublicId}");
             }
             workspaces = _mux.Workspaces();
         }
@@ -862,7 +939,7 @@ public sealed partial class MainWindow : Window
                         ? Loc.S("Agent_NotificationBlocked")
                         : Loc.S("Agent_NotificationDone");
                     _mux.CreateNotification(terminal, title, body);
-                    ShowAgentNotification(terminal, title, body, state);
+                    ShowAgentNotification(terminal, title, body);
                 }
             }
         }
@@ -872,15 +949,12 @@ public sealed partial class MainWindow : Window
         }
     }
 
-    private void ShowAgentNotification(string terminalId, string title, string body, string state)
+    private void ShowAgentNotification(string terminalId, string title, string body)
     {
         _agentNotificationTerminal = terminalId;
-        AgentNotificationBar.Title = title;
-        AgentNotificationBar.Message = body;
-        AgentNotificationBar.Severity = state == "blocked"
-            ? InfoBarSeverity.Warning
-            : InfoBarSeverity.Success;
-        AgentNotificationBar.IsOpen = true;
+        AgentNotificationTitle.Text = title;
+        AgentNotificationMessage.Text = body;
+        AgentNotificationCard.Visibility = Visibility.Visible;
     }
 
     private void OnAgentNotificationFocus(object sender, RoutedEventArgs args)
@@ -889,8 +963,11 @@ public sealed partial class MainWindow : Window
         {
             FocusTerminal(terminal);
         }
-        AgentNotificationBar.IsOpen = false;
+        AgentNotificationCard.Visibility = Visibility.Collapsed;
     }
+
+    private void OnAgentNotificationClose(object sender, RoutedEventArgs args) =>
+        AgentNotificationCard.Visibility = Visibility.Collapsed;
 
     private void FocusTerminal(string terminalId)
     {
@@ -940,19 +1017,39 @@ public sealed partial class MainWindow : Window
 
     public void HandleActivation(string? folder)
     {
-        if (!string.IsNullOrWhiteSpace(folder))
+        if (_closed)
         {
-            var workspace = _mux.CreateWorkspace(NextWorkspaceTitle());
-            if (_mux.CreateTerminal(workspace.PublicId, folder))
+            return;
+        }
+        // This runs for a second launch that handed its work to this window.
+        // An exception here would escape a dispatcher callback and take down the
+        // running app, turning one failed launch into two lost windows.
+        try
+        {
+            if (!string.IsNullOrWhiteSpace(folder))
             {
-                workspace = _mux.Workspaces()
-                    .Single(candidate => candidate.PublicId == workspace.PublicId);
-                var entry = AddWorkspace(workspace, _mux.Snapshot());
-                Nav.SelectedItem = entry.Item;
-                ShowWorkspace(entry);
+                var workspace = _mux.CreateWorkspace(NextWorkspaceTitle());
+                if (_mux.CreateTerminal(workspace.PublicId, folder))
+                {
+                    workspace = _mux.Workspaces()
+                        .Single(candidate => candidate.PublicId == workspace.PublicId);
+                    var entry = AddWorkspace(workspace, _mux.Snapshot());
+                    Nav.SelectedItem = entry.Item;
+                    ShowWorkspace(entry);
+                }
+                else
+                {
+                    Diag.Log($"activation workspace terminal creation failed: {workspace.PublicId}");
+                }
             }
         }
-        Activate();
+        catch (Exception ex)
+        {
+            Diag.Log($"activation failed: {ex.Message}");
+        }
+        // A minimized window stays minimized through Activate alone, which is
+        // indistinguishable from the launch having done nothing at all.
+        ActivateWindow();
     }
 
     private WorkspaceEntry AddWorkspace(
@@ -1594,12 +1691,19 @@ public sealed partial class MainWindow : Window
         Activated -= OnWindowActivated;
         Closed -= OnWindowClosed;
         RootGrid.Loaded -= OnRootGridLoaded;
+        if (_windowHandle != IntPtr.Zero)
+        {
+            RemoveWindowSubclass(
+                _windowHandle,
+                _mainWindowSubclassProc,
+                new UIntPtr(MainWindowSubclassId));
+        }
         if (_inputSiteHandle != IntPtr.Zero)
         {
             RemoveWindowSubclass(
                 _inputSiteHandle,
-                _windowSubclassProc,
-                new UIntPtr(WindowSubclassId));
+                _inputSiteSubclassProc,
+                new UIntPtr(InputSiteSubclassId));
             _inputSiteHandle = IntPtr.Zero;
         }
         RemoveMouseHook();

@@ -138,6 +138,9 @@ internal static partial class CmuxNative
     [LibraryImport(Library, EntryPoint = "cmux_mux_last_error")]
     public static partial int MuxLastError(IntPtr mux, Span<byte> buffer, nuint capacity);
 
+    [LibraryImport(Library, EntryPoint = "cmux_last_open_error")]
+    public static partial int LastOpenError(Span<byte> buffer, nuint capacity);
+
     [LibraryImport(Library, EntryPoint = "cmux_mux_apply_theme_text")]
     public static partial int MuxApplyThemeText(
         IntPtr mux,

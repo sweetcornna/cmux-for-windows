@@ -30,9 +30,30 @@ internal sealed class MuxRuntime : IDisposable
             : CmuxNative.MuxOpenTransientNamed(name, (nuint)name.Length);
         if (handle == IntPtr.Zero)
         {
-            throw new InvalidOperationException("The cmux session could not be opened.");
+            throw new InvalidOperationException(
+                $"The cmux session could not be opened: {LastOpenFailure()}");
         }
         return new MuxRuntime(handle);
+    }
+
+    /// <summary>
+    /// Why the engine refused the last session open.
+    ///
+    /// A failed open happens before there is a window to report through, so the
+    /// reason has to travel with the exception or it is lost entirely.
+    /// </summary>
+    private static string LastOpenFailure()
+    {
+        var required = CmuxNative.LastOpenError(Span<byte>.Empty, 0);
+        if (required <= 0)
+        {
+            return "unknown engine error";
+        }
+        var buffer = new byte[required];
+        var written = CmuxNative.LastOpenError(buffer, (nuint)buffer.Length);
+        return written > 0
+            ? Encoding.UTF8.GetString(buffer.AsSpan(0, written))
+            : "unknown engine error";
     }
 
     public IReadOnlyList<WorkspaceInfo> Workspaces()
@@ -72,6 +93,13 @@ internal sealed class MuxRuntime : IDisposable
         return Workspaces().Single(workspace => workspace.PublicId == publicId);
     }
 
+    /// <summary>
+    /// Reused across snapshots so the topology poll stops allocating a fresh
+    /// multi-kilobyte array every tick. Only ever touched from the UI thread,
+    /// like the rest of this type.
+    /// </summary>
+    private byte[] _snapshotBuffer = [];
+
     public MuxSnapshot Snapshot()
     {
         for (var attempt = 0; attempt < 4; attempt++)
@@ -81,7 +109,11 @@ internal sealed class MuxRuntime : IDisposable
             {
                 throw new InvalidOperationException("The cmux topology snapshot could not be sized.");
             }
-            var buffer = new byte[required];
+            if (_snapshotBuffer.Length < required)
+            {
+                _snapshotBuffer = new byte[required];
+            }
+            var buffer = _snapshotBuffer;
             var written = CmuxNative.MuxSnapshotJson(_handle, buffer, (nuint)buffer.Length);
             if (written == CmuxNative.ErrorCapacity)
             {
@@ -242,16 +274,22 @@ internal sealed class MuxRuntime : IDisposable
             "terminal restart directory");
     }
 
-    public bool ReportAgent(string terminal, string state, string? sourceSession) =>
-        TryMutation("agent.report", new()
+    public bool ReportAgent(string terminal, string state, string? sourceSession)
+    {
+        var parameters = new Dictionary<string, object?>
         {
             ["machine"] = "current",
             ["session"] = "current",
             ["terminal_id"] = terminal,
             ["state"] = state,
             ["source"] = "hook",
-            ["source_session"] = sourceSession,
-        });
+        };
+        if (!string.IsNullOrWhiteSpace(sourceSession))
+        {
+            parameters["source_session"] = sourceSession;
+        }
+        return TryMutation("agent.report", parameters);
+    }
 
     public bool CreateNotification(string terminal, string title, string body) =>
         TryMutation("notification.create", new()

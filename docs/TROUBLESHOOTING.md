@@ -23,6 +23,18 @@ Get-AppxPackage -Name cmux.Windows.ShellIntegration
 
 If it is missing, reinstall the current Setup build. If it is present, disable and re-enable Explorer integration, then open a fresh Explorer window. Windows 10 intentionally uses the classic menu only.
 
+## Nothing happens when cmux is launched
+
+A launch that cannot open its saved workspace session now reports the reason in a dialog and writes it to `%LOCALAPPDATA%\cmux-gui.log`; a launch that leaves no window and no log line at all predates that reporting.
+
+The usual cause is another process still holding the session. A closing window releases the session only once its terminals are gone and its registry is closed, so a launch starts by waiting up to five seconds for that handover. If the dialog still reports `already owned by another daemon`, a previous cmux is stuck; end it and launch again:
+
+```powershell
+Get-Process -Name CmuxGui -ErrorAction SilentlyContinue
+```
+
+A launch verb from Explorer hands its folder to the running window instead of opening a second one, so the existing window comes forward with a new workspace rather than a new window appearing.
+
 ## The GUI opens without a working terminal
 
 Confirm that `cmux_ffi.dll` is beside `CmuxGui.exe`. For a source build, build the debug FFI engine before the WinUI project:

@@ -14056,7 +14056,6 @@ fn restored_agent_command(
             "-File".into(),
             launcher.to_string_lossy().into_owned(),
             provider.into(),
-            "--".into(),
         ];
         command.extend(match provider {
             "claude" => vec!["--resume".into(), session_id.into()],
@@ -17669,7 +17668,6 @@ mod tests {
                 "-File",
                 launcher.to_string_lossy().as_ref(),
                 "claude",
-                "--",
                 "--resume",
                 "session-alpha",
             ]
